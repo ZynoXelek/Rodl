@@ -1,6 +1,5 @@
 # Ignoring dataset
 dataset/*
-!dataset/e.txt
 
 
 # Byte-compiled / optimized / DLL files
