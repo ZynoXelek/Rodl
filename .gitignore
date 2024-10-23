@@ -1,5 +1,6 @@
 # Ignoring dataset
 dataset/*
+!dataset/README.md
 
 
 # Byte-compiled / optimized / DLL files
