@@ -1,7 +1,6 @@
 import cv2 as cv
 import numpy as np
 
-
 def waitNextKey(delay: int = 0) -> None:
     """
     Waits for next opencv key for the given delay.
@@ -35,6 +34,27 @@ def normalize(im: np.ndarray) -> np.ndarray:
     """
     max_value = np.max(im)
     min_value = np.min(im)
+    return (im - min_value) / (max_value - min_value)
+
+
+
+def nannormalize(im: np.ndarray) -> np.ndarray:
+    """
+    Normalize the image to have values between 0 and 1.
+    It will ignore the nan values.
+    
+    Parameters
+    ----------
+    im: np.ndarray
+        image to normalize
+    
+    Returns
+    -------
+    normalized_im: np.ndarray
+        normalized image
+    """
+    max_value = np.nanmax(im)
+    min_value = np.nanmin(im)
     return (im - min_value) / (max_value - min_value)
 
 
@@ -446,7 +466,6 @@ def custom_similarity(image: np.ndarray,
     
     if show:
         min_value = np.min(result)
-        max_value = np.max(result)
         min_pos = np.unravel_index(np.argmin(result), result.shape)
         print("min pos =", min_pos, " correct? ", min_value == result[min_pos])
         indices = [min_pos, (164, 243)]
@@ -503,3 +522,40 @@ def custom_similarity(image: np.ndarray,
     cv.destroyAllWindows()
     
     return result
+
+
+
+def custom_matching(im: np.ndarray, template: np.ndarray) -> np.ndarray:
+    """
+    Compute the squared difference map between the two images.
+    It only consider the RGB channels, where the template transparency is not 0.
+    
+    Parameters
+    ----------
+    im: np.ndarray
+        original image
+    template: np.ndarray
+        template image
+    
+    Returns
+    -------
+    similarity_map: np.ndarray
+        squared difference map
+    """
+    
+    h, w = im.shape[:2]
+    th, tw = template.shape[:2]
+    
+    sim_h, sim_w = h - th + 1, w - tw + 1
+    
+    similarity_map = np.zeros((sim_h, sim_w), dtype=np.float32)
+    mask = template[:, :, 3] > 0
+    
+    for i in range(sim_h):
+        for j in range(sim_w):
+            cropped_im = im[i:i+th, j:j+tw]
+            diff = cropped_im - template
+            squared_diff = np.sum(np.square(diff[mask]))
+            similarity_map[i, j] = squared_diff
+    
+    return similarity_map
