@@ -7,6 +7,17 @@ from template_advanced_matcher import *
 
 def main():
     """Main function of the program."""
+    
+    depth_test1 = normalize(cv.imread("res/depth_testing_ref(1).png"))
+    depth_test2 = normalize(cv.imread("res/depth_testing_ref(2).png"))
+    
+    cv.imshow("Depth test 1", depth_test1)
+    cv.imshow("Depth test 2", depth_test2)
+    
+    waitNextKey(0)
+    
+    
+    
     template_im = cv.imread("res/extinguisher-template.png", cv.IMREAD_UNCHANGED)
     im = cv.imread("res/testing-ref.png")
     
