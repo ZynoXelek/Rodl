@@ -48,7 +48,10 @@ class TemplateAdvancedMatcher():
     #* Constructor
     
     def __init__(self, image: np.ndarray) -> None:
-        self.setImage(image)
+        if image is not None:
+            self.setImage(image)
+        else:
+            self.reset()
     
     
     
@@ -64,11 +67,17 @@ class TemplateAdvancedMatcher():
         ----------
         image: np.ndarray
             The image to set.
+            
+        Raises
+        ------
+        ValueError: If the image is None.
         """
+        if image is None:
+            raise ValueError("The image cannot be None.")
+        
         self.reset()
         
         self._image = image.copy()
-    
     
     def reset(self) -> None:
         self._image = None
@@ -79,6 +88,8 @@ class TemplateAdvancedMatcher():
         self._range_fx = None
         self._range_fy = None
         self._template_size_table = None
+        self._min_th = None
+        self._min_tw = None
         self._similarity_stats = [None] * 6 # [min_val, max_val, min_index, max_index, mean_val, median_val]
         
         self.similarity_map = None
@@ -116,10 +127,10 @@ class TemplateAdvancedMatcher():
     
     #* Private helper methods
     
-    def _getTemplateSizeTable(self,
-                              base_template: np.ndarray,
-                              range_fx: np.ndarray,
-                              range_fy: np.ndarray,
+    @staticmethod
+    def _computeTemplateSizeTable(base_template: np.ndarray,
+                                  range_fx: np.ndarray,
+                                  range_fy: np.ndarray,
     ) -> np.ndarray:
         """
         This method returns the table of the different sizes of the template with the given scaling factors.
@@ -161,6 +172,98 @@ class TemplateAdvancedMatcher():
     
     
     
+    
+    @staticmethod
+    def _checkValidTemplateSizeTable(template_size_table: np.ndarray,
+                                     image_width: int,
+                                     image_height: int,
+    ) -> np.ndarray:
+        if template_size_table is None:
+            raise ValueError("The template size table is None. Please provide a valid table.")
+    
+        if not isinstance(template_size_table, np.ndarray):
+            raise ValueError("The template size table should be a numpy array.")
+
+        if template_size_table.ndim != 3:
+            raise ValueError("The template size table should be a 3D numpy array.")
+        
+        if template_size_table.shape[2] != 2:
+            raise ValueError("The template size table should have a shape of (lx, ly, 2).")
+        
+        # Check if every size is correct
+        lx, ly = template_size_table.shape[:2]
+        
+        for i in range(lx):
+            for j in range(ly):
+                tw, th = template_size_table[i, j]
+                
+                if tw > image_width or th > image_height:
+                    err_mess = "Template size is too large for the image at index ({0}, {1})".format(i, j)
+                    err_mess += "(Template size: {0}x{1}, Image size: {2}x{3})".format(tw, th, image_width, image_height)
+                    raise ValueError(err_mess)
+    
+    
+    
+    
+    @staticmethod
+    def _computeValidTemplateSizeTable(image: np.ndarray,
+                                       base_template: np.ndarray,
+                                       range_fx: np.ndarray,
+                                       range_fy: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Computes a valid template size table by ensuring that the template sizes do not exceed the image dimensions.
+        
+        Parameters
+        -----------
+        image : np.ndarray
+            The image to match with the template.
+        base_template : np.ndarray
+            The base template used for matching.
+        range_fx : np.ndarray
+            The range of scaling factors in the x-dimension.
+        range_fy : np.ndarray
+            The range of scaling factors in the y-dimension.
+        
+        Returns
+        --------
+        np.ndarray
+            A new template size table with valid sizes that fit within the image dimensions.
+        np.ndarray
+            The new range of scaling factors in the x-dimension.
+        np.ndarray
+            The new range of scaling factors in the y-dimension.
+        
+        Raises
+        -------
+        ValueError
+            If the image is None or invalid.
+        """
+        
+        if image is None:
+            raise ValueError("The image is not set yet. Please set the image before running the `advance_match()` method.")
+        if not isinstance(image, np.ndarray):
+            raise ValueError("The image should be a numpy array.")
+        if image.ndim < 2:
+            raise ValueError("The image is not valid. Please provide a valid image.")
+        
+        image_h, image_w = image.shape[:2]
+        template_size_table = TemplateAdvancedMatcher._computeTemplateSizeTable(base_template, range_fx, range_fy)
+        
+        invalid_sizes = np.where((template_size_table[:, :, 0] > image_w) | (template_size_table[:, :, 1] > image_h))
+        
+        # Compute the new ranges and the new template size table
+        new_range_fx = np.delete(range_fx, invalid_sizes[0])
+        new_range_fy = np.delete(range_fy, invalid_sizes[1])
+        
+        new_template_size_table = TemplateAdvancedMatcher._computeTemplateSizeTable(base_template, new_range_fx, new_range_fy)
+        
+        return new_template_size_table, new_range_fx, new_range_fy
+
+    
+    
+    
+    
     def _computeSimilarityStats(self) -> list[float]:
         """
         This method computes the statistics of the similarity map found by the `advance_match()` method.
@@ -190,6 +293,94 @@ class TemplateAdvancedMatcher():
         
         return self._similarity_stats
     
+    
+    
+    @staticmethod
+    def _processSingleMatch(im: np.ndarray,
+                            template: np.ndarray,
+                            matching_method: Callable,
+    ) -> np.ndarray:
+        th, tw = template.shape[:2]
+        
+        # Dividing the similarity values by the number of pixels in the template to limit big templates from being
+        # penalized compared to small templates
+        similarity = matching_method(im, template) / (tw * th) #TODO: Division to be removed?
+        
+        return similarity
+    
+    
+    
+    @staticmethod
+    def _processAllMatches(im: np.ndarray,
+                           base_template: np.ndarray,
+                           range_fx: np.ndarray,
+                           range_fy: np.ndarray,
+                           single_similarity_width: int,
+                           single_similarity_height: int,
+                           matching_method: Callable,
+                           show_progress: bool) -> np.ndarray:
+        
+        lx = len(range_fx)
+        ly = len(range_fy)
+
+        similarity_map = np.nan * np.ones((lx, ly, single_similarity_height, single_similarity_width))
+        
+        
+        if show_progress:
+            last_percent = None
+            print("Beginning computation of the similarity array...")
+        for i in range(lx):
+            fx = range_fx[i]
+            
+            for j in range(ly):
+                fy = range_fy[j]
+                
+                # #TODO: temporary
+                # print("Image n° {0}/{1} with fx = {2} and fy = {3}".format(i * len(range_fy) + j + 1, lx * ly, fx, fy))
+                
+                template = cv.resize(base_template, None, None, fx = fx, fy = fy)
+                #TODO: temporary
+                # cv.imshow('template', template)
+                
+                
+                similarity = TemplateAdvancedMatcher._processSingleMatch(im, template, matching_method)
+                
+                # sim_extrema = cv.minMaxLoc(similarity)
+        
+                # value = sim_extrema[similarity_case[0]]
+                # location = sim_extrema[similarity_case[1]]
+                # x, y = location
+                
+                #* Padding
+                sim_h, sim_w = similarity.shape[:2]
+                padded_sim = np.pad(similarity,
+                                    ((0, single_similarity_height - sim_h), (0, single_similarity_width - sim_w)),
+                                    'constant',
+                                    constant_values=np.nan)
+                similarity_map[i, j] = padded_sim
+
+                # #TODO: Temporary
+                # temp_im = im.copy()
+                # cv.imshow('similarity', similarity.copy()/np.max(similarity))
+                # cv.rectangle(temp_im, location, (x + tw, y + th), TemplateAdvancedMatcher.RECTANGLE_COLOR, TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
+                # cv.imshow('Result', temp_im)
+                
+                # waitNextKey(10)
+                
+                if show_progress:
+                    percent = round((i * ly + j + 1) / (lx * ly) * 100)
+                    if percent != last_percent:
+                        print("Progress: {0}%".format(percent), end="\r")
+                    last_percent = percent
+        
+        if show_progress:
+            print("Progress: 100%")
+            print("Similarity computations finished!")
+        
+        # Normalize the similarity map
+        similarity_map = nannormalize(similarity_map)
+        
+        return similarity_map
     
     
     
@@ -239,7 +430,11 @@ class TemplateAdvancedMatcher():
             
         Raises
         ------
-            ValueError: If the image is not set yet.
+        ValueError
+            If the image is not set yet
+            If the mode is not valid
+            If the template size is too large for the image
+            
         """
         
         #TODO: verif on sizes, shapes, etc...
@@ -281,101 +476,51 @@ class TemplateAdvancedMatcher():
             
             similarity_case = custom_case.value
 
-            
+
 
         im = self._image
-        
-        lx = len(range_fx)
-        ly = len(range_fy)
-        
         image_h, image_w = self._image.shape[:2]
-        base_template_h, base_template_w = base_template.shape[:2]
         
-        template_size_table = self._getTemplateSizeTable(base_template, range_fx, range_fy)
         
-        # Check if every size is correct
-        min_tw = np.inf
-        min_th = np.inf
+        template_size_table = None
+        min_tw = None
+        min_th = None
         
-        for i in range(lx):
-            for j in range(ly):
-                tw, th = template_size_table[i, j]
-                min_tw, min_th = min(min_tw, tw), min(min_th, th)
-                
-                if tw > image_w or th > image_h:
-                    err_mess = "Template size is too large for the image with scaling factors fx = {0} and fy = {1}.".format(range_fx[i], range_fy[j])
-                    err_mess += "(Original template size: {0}x{1}, Image size: {2}x{3})".format(base_template_w, base_template_h, image_w, image_h)
-                    raise ValueError(err_mess)
+        if self._original_template is not None and self._original_template == base_template:
+            
+            if self._range_fx == range_fx and self._range_fy == range_fy:
+                template_size_table = self._template_size_table
+                min_tw = self._min_tw
+                min_th = self._min_th
         
+        if template_size_table is None:
+            template_size_table = TemplateAdvancedMatcher._computeTemplateSizeTable(base_template, range_fx, range_fy)
+            TemplateAdvancedMatcher._checkValidTemplateSizeTable(template_size_table, image_w, image_h)
+            
+            min_tw = np.min(template_size_table[:, :, 0])
+            min_th = np.min(template_size_table[:, :, 1])
+        
+        if min_tw is None or min_th is None:
+            min_tw = np.min(template_size_table[:, :, 0])
+            min_th = np.min(template_size_table[:, :, 1])
         
         self._original_template = base_template
         self._mode = mode
         self._range_fx = range_fx
         self._range_fy = range_fy
         self._template_size_table = template_size_table
+        self._min_tw = min_tw
+        self._min_th = min_th
         
         # Get max similarity map size
         max_sim_h = image_h - min_th + 1
         max_sim_w = image_w - min_tw + 1
-
-        similarity_map = np.nan * np.ones((lx, ly, max_sim_h, max_sim_w))
         
-        
-        if show_progress:
-            last_percent = None
-            print("Beginning computation of the similarity array...")
-        for i in range(lx):
-            fx = range_fx[i]
-            
-            for j in range(ly):
-                fy = range_fy[j]
-                
-                # #TODO: temporary
-                # print("Image n° {0}/{1} with fx = {2} and fy = {3}".format(i * len(range_fy) + j + 1, lx * ly, fx, fy))
-                
-                template = cv.resize(base_template, None, None, fx = fx, fy = fy)
-                #TODO: temporary
-                # cv.imshow('template', template)
-                th, tw = template.shape[:2]
-                
-                # Dividing the similarity values by the number of pixels in the template to limit big templates from being
-                # penalized compared to small templates
-                similarity = matching_method(im, template) / (tw * th) #TODO: Division to be removed?
-                sim_extrema = cv.minMaxLoc(similarity)
-                
-                value = sim_extrema[similarity_case[0]]
-                location = sim_extrema[similarity_case[1]]
-                x, y = location
-                
-                sim_h, sim_w = similarity.shape[:2]
-                padded_sim = np.pad(similarity, ((0, max_sim_h - sim_h), (0, max_sim_w - sim_w)), 'constant', constant_values=np.nan)
-                similarity_map[i, j] = padded_sim
-
-                # #TODO: Temporary
-                # temp_im = im.copy()
-                # cv.imshow('similarity', similarity.copy()/np.max(similarity))
-                # cv.rectangle(temp_im, location, (x + tw, y + th), TemplateAdvancedMatcher.RECTANGLE_COLOR, TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
-                # cv.imshow('Result', temp_im)
-                
-                # waitNextKey(10)
-                
-                if show_progress:
-                    percent = round((i * ly + j + 1) / (lx * ly) * 100)
-                    if percent != last_percent:
-                        print("Progress: {0}%".format(percent), end="\r")
-                    last_percent = percent
-        
-        if show_progress:
-            print("Progress: 100%")
-            print("Similarity computations finished!")
-        
-        # Normalize the similarity map
-        similarity_map = nannormalize(similarity_map)
-        
+        # Compute the similarity map
+        similarity_map = TemplateAdvancedMatcher._processAllMatches(im, base_template, range_fx, range_fy, max_sim_w, max_sim_h, matching_method, show_progress)
         self._similarity_map = similarity_map
         
         similarity_stats = self._computeSimilarityStats()
-
         min_max_index = similarity_stats[similarity_case[1]] # (i_fx, j_fy, height, width)
         
         best_format = template_size_table[*min_max_index[0:2]]
@@ -388,3 +533,17 @@ class TemplateAdvancedMatcher():
         self._best_im = best_im
         
         return best_im
+    
+    
+    #TODO:
+    # Je propose:
+    # - On enlève l'image de l'objet, ainsi que quasi tous les attributs.
+    # - Toutes les méthodes déjà crées là peuvent devenir statiques, et on vire les get et self.
+    # - On ajoute une méthode d'instance qui sera 'all-in' et qui prendra tous les paramètres nécessaires: la vidéo en entière ou chaque image.
+    # - Elle traite le tout et stocke cette fois dans l'objets les résultats uniquement.
+    # - On y récupèrera les images finales, les stats, les scores de confiance, etc...
+    # Du coup soit on fait un traitement à postériori avec tout d'un coup, soit au frame par frame à voir.
+    # Et du coup on devra sans doutes garder quelques attributs privés pour ne pas tout recalculer à chaque fois. Mais ils seront cachés de l'utilisateur quoi.
+    # Je pense que dans l'idée, la méthode ne renvoie que les données, pas l'image finale.
+    # Et on a une fonction statique qui prend exactement (ou partiellement) ces données là et qui construit l'image finale pour l'affichage.
+    # Avec peut-être d'autre fonctions statiques pour reconstruire les images des étapes intermédiaires si on veut voir ce qu'il se passe.
