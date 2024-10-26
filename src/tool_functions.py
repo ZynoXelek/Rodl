@@ -1,5 +1,17 @@
 import cv2 as cv
 import numpy as np
+from sklearn.cluster import DBSCAN
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                           GENERIC                                             #
+#?                                                                                               #
+#?################################################################################################
+
+
+
 
 def waitNextKey(delay: int = 0) -> None:
     """
@@ -56,6 +68,24 @@ def nannormalize(im: np.ndarray) -> np.ndarray:
     max_value = np.nanmax(im)
     min_value = np.nanmin(im)
     return (im - min_value) / (max_value - min_value)
+
+
+
+
+
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                      TRANSPARENCY SUPPORT                                     #
+#?                                                                                               #
+#?################################################################################################
+
+
+
+
+
 
 
 
@@ -277,7 +307,7 @@ def setTransparentPixelsTo(im: np.ndarray, color: tuple = (0, 0, 0, 0)) -> np.nd
 
 def crop(im: np.ndarray) -> np.ndarray:
     """
-    Crops the image so that we only keep the important part.
+    Crops an image supporting transparency so that we only keep the biggest non transparent sub-image.
 
     Parameters
     ----------
@@ -340,6 +370,333 @@ def crop(im: np.ndarray) -> np.ndarray:
     
     cropped_im = im[min_row_index:max_row_index, min_col_index:max_col_index]
     return cropped_im
+
+
+
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                 CLUSTERING AND SEGMENTATION                                   #
+#?                                                                                               #
+#?################################################################################################
+
+
+
+
+
+#* K-Means clustering
+
+
+
+
+
+def kmeans(im: np.ndarray,
+           criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
+           nKlusters = 7,
+           attempts = 30,
+           flags = cv.KMEANS_PP_CENTERS) -> np.ndarray:
+    
+    shape = im.shape
+    
+    if len(shape) == 2:
+        flatten_im = np.float32(im.reshape(-1, 1))
+    elif len(shape) == 3:
+        flatten_im = np.float32(im.reshape(-1, 3))
+    else:
+        raise ValueError("The image has an incorrect shape.")
+    
+    _, labels, centers = cv.kmeans(flatten_im, nKlusters, None, criteria, attempts, flags)
+    
+    # Display the results
+    COLORS = np.random.randint(0, 255, size=(nKlusters, 3), dtype=np.uint8)
+    
+    centers = np.uint8(centers)
+    
+    segmented_image = COLORS[labels.flatten()].reshape(shape[:2] + (3,))
+    
+    return segmented_image
+
+
+
+
+
+def remove_background_kmeans(im: np.ndarray,
+                      replacing_color: tuple | float | int = None,
+                      exclude_single_pixels: bool = False,
+                      erosion_size: int = 3,
+                      dilation_size: int = 3,
+                      box_excluding_size: tuple[int] = (10, 10),
+) -> np.ndarray:
+    """
+    Remove the background of an image.
+    This is done by segmenting the image using KMeans clustering and considering the two most common colors as the background. (ground and wall/roof)
+    Then, it detects the contours of the relevant objects.
+    
+    Parameters
+    ----------
+    im : np.ndarray
+        The image to process.
+    replacing_color : tuple | float | int, optional
+        The color to replace the background with. If None, the default color is black.
+        For grayscale images, replacing_color must be an int or float.
+        For color images, replacing_color must be a tuple of three elements.
+    exclude_single_pixels : bool, optional
+        If True, single pixels will be removed from the objects by applying erosion followed by dilation.
+        Defaults to False
+    erosion_size : int, optional
+        The size of the erosion kernel. Only used if exclude_single_pixels is True. Defaults to 3.
+    dilation_size : int, optional
+        The size of the dilation kernel. Only used if exclude_single_pixels is True. Defaults to 3.
+    box_excluding_size : tuple[int], optional
+        The size of the box to exclude objects that are too small.
+        The box is defined by (width, height). Defaults to (10, 10).
+    
+    Returns
+    -------
+    np.ndarray
+        The image with the background removed.
+    contours : list
+        The list of contours of the relevant non background objects detected.
+        
+    Raises
+    ------
+    ValueError
+        If the image has an incorrect shape
+        If replacing_color is not of the correct type.
+        If the erosion and dilation sizes are not odd numbers greater than or equal to 1.
+        If the box excluding size is not an integer or is less than 1.
+    """
+    # Get the right replacing color
+    if replacing_color is None:
+        # by default, black color is used to replace the background
+        if len(im.shape) == 2:
+            replacing_color = 0
+        elif len(im.shape) == 3:
+            replacing_color = (0, 0, 0)
+        else:
+            raise ValueError("The image has an incorrect shape.")
+    else:
+        if len(im.shape) == 2 and not isinstance(replacing_color, (int, float)):
+            raise ValueError("For grayscale images, replacing_color must be an int or float.")
+        elif len(im.shape) == 3 and not (isinstance(replacing_color, tuple) and len(replacing_color) == 3):
+            raise ValueError("For color images, replacing_color must be a tuple of three elements.")
+    
+    if erosion_size < 1:
+        raise ValueError("The erosion size must be an odd number greater than or equal to 1.")
+    if erosion_size % 2 == 0:
+        raise ValueError("The erosion size must be an odd number.")
+    
+    if dilation_size < 1:
+        raise ValueError("The dilation size must be an odd number greater than or equal to 1.")
+    if dilation_size % 2 == 0:
+        raise ValueError("The dilation size must be an odd number.")
+    
+    if not isinstance(box_excluding_size, tuple):
+        if isinstance(box_excluding_size, int):
+            box_excluding_size = (box_excluding_size, box_excluding_size)
+        else:
+            raise ValueError("The box excluding size must be an integer or a tuple of two integers.")
+    else:
+        if not isinstance(box_excluding_size[0], int) or not isinstance(box_excluding_size[1], int):
+            raise ValueError("The box excluding size must be an integer or a tuple of two integers.")
+    
+    if box_excluding_size[0] < 1 or box_excluding_size[1] < 1:
+        raise ValueError("The box excluding dimensions must both be greater or equal to 1.")
+    
+    
+    NB_ATTEMPTS = 7
+    NB_KLUSTERS = 7 # 3 or 7
+    NB_BACKGROUND_COLORS = 4 # 2 or 4
+    
+    EROSION_SIZE = erosion_size
+    DILATION_SIZE = dilation_size
+    
+    EXCLUDING_SIZE = box_excluding_size
+    
+    seg_im = kmeans(im, nKlusters=NB_KLUSTERS, attempts=NB_ATTEMPTS)
+    
+    # Get all unique colors and their counts
+    unique_colors, counts = np.unique(seg_im.reshape(-1, 3), axis=0, return_counts=True)
+    
+    # Sort both arrays by counts (descending)
+    sorted_indices = np.argsort(counts)[::-1]
+    unique_colors = unique_colors[sorted_indices]
+    counts = counts[sorted_indices]
+    
+    # Mask the background
+    object_colors = unique_colors[NB_BACKGROUND_COLORS:]
+    
+    
+    # Creating a new image with the replacing color and adding the object colors on top
+    final_im = np.full(im.shape[:2] + (3,), replacing_color, dtype=np.uint8)
+    
+    mask_int = (np.isin(seg_im.reshape(-1, 3), object_colors).all(axis=-1).reshape(seg_im.shape[:2])).astype(np.uint8)
+    
+    #TODO: temporary
+    cv.imshow("After kmeans: initial object mask", mask_int * 255)
+    
+    if exclude_single_pixels:
+        # Remove single object pixels by erosion + dilation    
+        mask_int = cv.dilate(mask_int, np.ones((DILATION_SIZE, DILATION_SIZE), np.uint8), iterations=1)
+        mask_int = cv.erode(mask_int, np.ones((EROSION_SIZE, EROSION_SIZE), np.uint8), iterations=1)
+        
+        #TODO: temporary
+        cv.imshow("Post erosion", mask_int * 255)
+        
+    # Then detect objects' contours
+    contours, hierarchy = cv.findContours(mask_int * 255, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    relevant_contours = []
+    
+    
+    #TODO: temporary
+    contour_im = np.zeros(im.shape[:2], dtype=np.uint8)
+    for contour in contours:
+        x, y, w, h = cv.boundingRect(contour)
+        
+        if w >= EXCLUDING_SIZE[0] and h >= EXCLUDING_SIZE[1]:
+            relevant_contours.append(contour)
+            cv.drawContours(contour_im, [contour], -1, 255, 1)
+    
+    #TODO: temporary
+    cv.imshow("Post contour", contour_im)
+    
+    mask = mask_int.astype(bool)
+    
+    final_im[mask] = im[mask]
+    
+    return final_im, relevant_contours
+
+
+
+
+
+
+#* Superpixels
+
+
+def slic(im: np.ndarray,
+         region_size: int = 30,
+         ruler: float = 10.0,
+         iterations: int = 10,
+         min_element_size: int = 25,
+) -> np.ndarray:
+    """
+    Perform SLIC (Simple Linear Iterative Clustering) superpixel segmentation on an image.
+    
+    Parameters
+    -----------
+    im : np.ndarray
+        Input image on which superpixel segmentation is to be performed.
+    region_size : int, optional
+        Size of the superpixel regions. Default is 30.
+    ruler : float, optional
+        Compactness parameter for the SLIC algorithm. Default is 10.0.
+    iterations : int, optional
+        Number of iterations for the SLIC algorithm. Default is 10.
+    min_element_size : int, optional
+        Minimum element size to enforce label connectivity. Default is 25.
+    
+    Returns
+    --------
+    mask_slic : np.ndarray
+        Mask of the superpixel boundaries.
+    labels : np.ndarray
+        Array of labels for each pixel.
+    num_labels : int
+        Number of superpixels generated.
+    """
+    SLIC = cv.ximgproc.SLIC
+    SLICO = cv.ximgproc.SLICO
+    MSLIC = cv.ximgproc.MSLIC
+
+    algorithm = MSLIC # can be SLIC, SLICO or MSLIC
+    
+    
+    # Apply gaussian filter to the image
+    im = cv.GaussianBlur(im, (5, 5), 0)
+    
+    if len(im.shape) == 2:
+        im = cv.cvtColor(im, cv.COLOR_GRAY2BGR)
+    elif len(im.shape) == 3 and im.shape[2] == 4:
+        im = cv.cvtColor(im, cv.COLOR_BGRA2BGR)
+    elif len(im.shape) != 3:
+        raise ValueError("Input image must be a color image")
+    
+    # Convert im to LAB color space
+    im = cv.cvtColor(im, cv.COLOR_BGR2LAB)
+    
+    # Process SLIC
+    slic = cv.ximgproc.createSuperpixelSLIC(im, algorithm, region_size=region_size, ruler=ruler)
+    
+    slic.iterate(iterations)
+    slic.enforceLabelConnectivity(min_element_size)
+    
+    mask_slic = slic.getLabelContourMask()
+    labels = slic.getLabels()
+    num_labels = slic.getNumberOfSuperpixels()
+    
+    return mask_slic, labels, num_labels
+
+
+
+
+
+
+def remove_background_superpixels(im: np.ndarray,
+) -> np.ndarray:
+    
+    mask_slic, labels, num_labels = slic(im)
+    
+    #TODO: temporary
+    contour_color = (0, 255, 0)
+    superpixel_im = im.copy()
+    superpixel_im[mask_slic != 0] = contour_color
+    
+    cv.imshow("Superpixel image", superpixel_im)
+    
+    
+    # Compute average color of each superpixel
+    average_colors = []
+    for i in range(num_labels):
+        mask = (labels == i)
+        avg_color = cv.mean(im, mask.astype(np.uint8) * 255)[:3]
+        average_colors.append(avg_color)
+    average_colors = np.array(average_colors)
+    
+    # Clustering using DBSCAN
+    dbscan = DBSCAN(eps=10, min_samples=2, metric="euclidean")
+    clusters = dbscan.fit_predict(average_colors)
+    
+    output_image = np.zeros_like(im)
+    for i in range(num_labels):
+        cluster_id = clusters[i]
+        if cluster_id != -1:
+            mask = (labels == i)
+            output_image[mask] = average_colors[i]
+        else:
+            mask = (labels == i)
+            output_image[mask] = (0, 0, 255)
+    
+    #! COMMENTS: Extinguishers are almost always classified as noise
+    #! Superpixels won't be used therefore.
+    
+    
+    cv.imshow("Clustered image", output_image)
+
+
+
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                 COMPUTING SIMILARITY MAPS                                     #
+#?                                                                                               #
+#?################################################################################################
+
+
 
 
 
