@@ -1,5 +1,52 @@
 import cv2 as cv
 import numpy as np
+from sklearn.cluster import DBSCAN
+from typing import Any
+
+from enum import Enum
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                           GENERIC                                             #
+#?                                                                                               #
+#?################################################################################################
+
+
+class ImageType(Enum):
+    GRAY_SCALE = 1
+    COLOR = 2
+    COLOR_WITH_ALPHA = 3
+    
+    @staticmethod
+    def getImageType(image: np.ndarray) -> 'ImageType':
+        """
+        Detects the type of the image (gray scale, color, color with alpha).
+        
+        Parameters
+        ----------
+        image: np.ndarray
+            image to detect the type of
+        
+        Returns
+        -------
+        image_type: ImageType
+            type of the image, or None if it is not a correct image
+        """
+        image_type = None
+        
+        if len(image.shape) == 2:
+            image_type = ImageType.GRAY_SCALE
+        elif len(image.shape) == 3:
+            if image.shape[2] == 3:
+                image_type = ImageType.COLOR
+            elif image.shape[2] == 4:
+                image_type = ImageType.COLOR_WITH_ALPHA
+        
+        return image_type
+
+
 
 def waitNextKey(delay: int = 0) -> None:
     """
@@ -38,7 +85,7 @@ def normalize(im: np.ndarray) -> np.ndarray:
 
 
 
-def nannormalize(im: np.ndarray) -> np.ndarray:
+def nanNormalize(im: np.ndarray) -> np.ndarray:
     """
     Normalize the image to have values between 0 and 1.
     It will ignore the nan values.
@@ -56,6 +103,220 @@ def nannormalize(im: np.ndarray) -> np.ndarray:
     max_value = np.nanmax(im)
     min_value = np.nanmin(im)
     return (im - min_value) / (max_value - min_value)
+
+
+
+def getBlackColor(image_type: ImageType) -> tuple:
+    match image_type:
+        case ImageType.GRAY_SCALE:
+            return 0
+        case ImageType.COLOR:
+            return (0, 0, 0)
+        case ImageType.COLOR_WITH_ALPHA:
+            return (0, 0, 0, 0)
+
+
+
+
+def rotateImage(image: np.ndarray, angle: float) -> np.ndarray:
+    """
+    Rotate an image by the given angle (in degrees).
+    The image is rotated around its center and keeps the same size.
+    This rotation method ignores np.nan values, and restore them in the rotated result.
+    
+    Parameters
+    ----------
+    image: np.ndarray
+        image to rotate
+    angle: float
+        angle in degrees to rotate the image
+    
+    Returns
+    -------
+    result: np.ndarray
+        rotated image
+    """
+    image_center = tuple(np.array(image.shape[1::-1]) / 2)
+    rot_mat = cv.getRotationMatrix2D(image_center, angle, 1.0)
+    return cv.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv.INTER_LINEAR)
+
+
+
+def _rotateImageIgnoreNan(image: np.ndarray, angle: float) -> np.ndarray:
+    # Create a mask of the np.nan values
+    nan_mask = np.isnan(image).astype(np.float32)
+
+    # Compute the rotation matrix
+    image_center = tuple(np.array(image.shape[1::-1]) / 2)
+    rot_mat = cv.getRotationMatrix2D(image_center, angle, 1.0)
+
+    # Apply the affine transformation to the image and the mask
+    result = cv.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv.INTER_LINEAR)
+    
+    b_value = 1
+    image_type = ImageType.getImageType(image)
+    
+    if image_type is None:
+        raise ValueError("Input image must be a correct image, either gray scale or color image with or without transparency")
+    
+    match image_type:
+        case ImageType.GRAY_SCALE:
+            b_value = 1
+        case ImageType.COLOR:
+            b_value = (1, 1, 1)
+        case ImageType.COLOR_WITH_ALPHA:
+            b_value = (1, 1, 1, 1)
+    transformed_nan_mask = cv.warpAffine(nan_mask, rot_mat, image.shape[1::-1], flags=cv.INTER_NEAREST, borderValue=b_value)
+
+    # Restore the np.nan values in the result using the transformed mask
+    result[transformed_nan_mask > 0] = np.nan
+    
+    return result
+
+
+
+def computeRotatedRequiredSize(image_size: tuple[int], angle: float) -> tuple[int]:
+    """
+    Compute the required size for an image after rotation by the given angle.
+    The image is rotated around its center.
+    
+    Parameters
+    ----------
+    image_size: tuple[int]
+        size of the image, in the order (width, height)
+    angle: float
+        angle in degrees to rotate the image
+    
+    Returns
+    -------
+    (W, H): tuple[int]
+        required size for the rotated image: (Width, Height)
+    """
+    image_size = np.array(image_size)
+    w, h = image_size[..., 0], image_size[..., 1]
+    rad_angle = np.radians(angle)
+    c = np.cos(rad_angle)
+    s = np.sin(rad_angle)
+    
+    H = (np.ceil(h * abs(c) + w * abs(s))).astype(int)
+    W = (np.ceil(h * abs(s) + w * abs(c))).astype(int)
+    
+    new_image_size = np.stack((W, H), axis=-1)
+    
+    return new_image_size
+
+
+
+def rotateImageWithoutLoss(image: np.ndarray, angle: float, color: int | float | tuple = None):
+    """
+    Rotate an image by the given angle.
+    The resulting image is resized so that no information is lost. The added pixels are filled with the given color (Black by default).
+    
+    Parameters
+    ----------
+    image: np.ndarray
+        image to rotate
+    angle: float
+        angle in degrees to rotate the image
+    color: int | float | tuple, optional
+        color to fill the added pixels with (default: black)
+    
+    Returns
+    -------
+    result: np.ndarray
+        rotated image
+    
+    Raises
+    ------
+        ValueError: if the input image is not a correct image
+    """
+    
+    image_type = ImageType.getImageType(image)
+    
+    if image_type is None:
+        raise ValueError("Input image must be a correct image, either gray scale or color image with or without transparency")
+    
+    
+    # Get default color
+    if color is None:
+        color = getBlackColor(image_type)
+    else:
+        match image_type:
+            case ImageType.GRAY_SCALE:
+                if not isinstance(color, (int, float)):
+                    raise ValueError("Color must be an int or a float for a gray scale image.")
+            case ImageType.COLOR:
+                if not isinstance(color, tuple) or len(color) != 3:
+                    raise ValueError("Color must be a tuple of 3 elements for a color image.")
+            case ImageType.COLOR_WITH_ALPHA:
+                if not isinstance(color, tuple) or len(color) != 4:
+                    raise ValueError("Color must be a tuple of 4 elements for a color image with transparency.")
+    
+    # Compute new image size
+    h, w = image.shape[:2]
+    W, H = computeRotatedRequiredSize((w, h), angle)
+    
+    temp_w, temp_h = max(w, W), max(h, H)
+    
+    
+    dummy_value = np.nan
+    new_image = np.full((temp_h, temp_w, 4), dummy_value, dtype=np.float64)
+    
+    # Add the original image in its center
+    begin_h = (temp_h - h) // 2
+    begin_w = (temp_w - w) // 2
+    converted_image = None
+    match image_type:
+        case ImageType.GRAY_SCALE:
+            converted_image = cv.cvtColor(image, cv.COLOR_GRAY2BGRA)
+        case ImageType.COLOR:
+            converted_image = cv.cvtColor(image, cv.COLOR_BGR2BGRA)
+        case ImageType.COLOR_WITH_ALPHA:
+            converted_image = image
+    new_image[begin_h:begin_h + h, begin_w:begin_w + w] = converted_image
+   
+    # Rotate the image
+    new_image = _rotateImageIgnoreNan(new_image, angle)
+    
+    # Crop the image
+    new_image = cropOnNan(new_image)
+    
+    # Verify the size
+    #print("Cropped image size: ", new_image.shape, " while W, H: ", W, H)
+    
+    # Replacing transparent by wanted color
+    wanted_color = np.zeros(4)
+    match image_type:
+        case ImageType.COLOR_WITH_ALPHA:
+            wanted_color = color
+        case _:
+            wanted_color[:3] = color
+    # Convert np nans to wanted color
+    new_image = np.nan_to_num(new_image, nan=wanted_color)
+    
+    new_image = new_image.astype(image.dtype)
+    
+    # Convert back to original image type
+    match image_type:
+        case ImageType.GRAY_SCALE:
+            new_image = cv.cvtColor(new_image, cv.COLOR_BGRA2GRAY)
+        case ImageType.COLOR:
+            new_image = cv.cvtColor(new_image, cv.COLOR_BGRA2BGR)
+        case ImageType.COLOR_WITH_ALPHA:
+            pass
+    
+    return new_image
+    
+
+#?################################################################################################
+#?                                                                                               #
+#?                                      TRANSPARENCY SUPPORT                                     #
+#?                                                                                               #
+#?################################################################################################
+
+
+
+
 
 
 
@@ -277,7 +538,7 @@ def setTransparentPixelsTo(im: np.ndarray, color: tuple = (0, 0, 0, 0)) -> np.nd
 
 def crop(im: np.ndarray) -> np.ndarray:
     """
-    Crops the image so that we only keep the important part.
+    Crops an image supporting transparency so that we only keep the biggest non transparent sub-image.
 
     Parameters
     ----------
@@ -343,6 +604,511 @@ def crop(im: np.ndarray) -> np.ndarray:
 
 
 
+def cropOnValue(im: np.ndarray, value: Any) -> np.ndarray:
+    """
+    Crops an image so that we only keep the biggest sub-image with no rows nor columns
+    full of value.
+
+    Parameters
+    ----------
+    im: np.ndarray
+        Original image to be cropped.
+    value: Any
+        Value that should not be kept when cropping.
+    Returns
+    -------
+    cropped_im: np.ndarray
+        Cropped image.
+    """
+    shape = im.shape
+    
+    # Row indexes
+    min_row_index = None
+    max_row_index = None
+    
+    # Column indexes
+    min_col_index = None
+    max_col_index = None
+    
+    # Finding the min and max rows
+    for i in range(shape[0]):
+        if min_row_index is None:
+            row = im[i]
+            if np.any(row != value):
+                min_row_index = i
+        
+        if max_row_index is None:
+            row = im[-1-i]
+            if np.any(row != value):
+                max_row_index = shape[0] - i
+        
+        if min_row_index is not None and max_row_index is not None:
+            break
+
+    for j in range(shape[1]):
+        if min_col_index is None:
+            col_left = im[:, j]
+            if np.any(col_left != value):
+                min_col_index = j
+        
+        if max_col_index is None:
+            col_right = im[:, -1-j]
+            if np.any(col_right != value):
+                max_col_index = shape[1] - j
+        
+        if min_col_index is not None and max_col_index is not None:
+            break
+    
+    # If something went wrong
+    if min_row_index is None:
+        min_row_index = 0
+    if max_row_index is None:
+        max_row_index = shape[0]
+    if min_col_index is None:
+        min_col_index = 0
+    if max_col_index is None:
+        max_col_index = shape[1]
+    
+    cropped_im = im[min_row_index:max_row_index, min_col_index:max_col_index]
+    return cropped_im
+
+
+
+def cropOnNan(im: np.ndarray) -> np.ndarray:
+    """
+    Crops an image so that we only keep the biggest sub-image with no rows nor columns
+    full of nans.
+
+    Parameters
+    ----------
+    im: np.ndarray
+        Original image to be cropped.
+    Returns
+    -------
+    cropped_im: np.ndarray
+        Cropped image.
+    """
+    shape = im.shape
+    
+    # Row indexes
+    min_row_index = None
+    max_row_index = None
+    
+    # Column indexes
+    min_col_index = None
+    max_col_index = None
+    
+    # Finding the min and max rows
+    for i in range(shape[0]):
+        if min_row_index is None:
+            row = im[i]
+            if not np.all(np.isnan(row)):
+                min_row_index = i
+        
+        if max_row_index is None:
+            row = im[-1-i]
+            if not np.all(np.isnan(row)):
+                max_row_index = shape[0] - i
+        
+        if min_row_index is not None and max_row_index is not None:
+            break
+
+    for j in range(shape[1]):
+        if min_col_index is None:
+            col_left = im[:, j]
+            if not np.all(np.isnan(col_left)):
+                min_col_index = j
+        
+        if max_col_index is None:
+            col_right = im[:, -1-j]
+            if not np.all(np.isnan(col_right)):
+                max_col_index = shape[1] - j
+        
+        if min_col_index is not None and max_col_index is not None:
+            break
+    
+    # If something went wrong
+    if min_row_index is None:
+        min_row_index = 0
+    if max_row_index is None:
+        max_row_index = shape[0]
+    if min_col_index is None:
+        min_col_index = 0
+    if max_col_index is None:
+        max_col_index = shape[1]
+    
+    cropped_im = im[min_row_index:max_row_index, min_col_index:max_col_index]
+    
+    return cropped_im
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                 CLUSTERING AND SEGMENTATION                                   #
+#?                                                                                               #
+#?################################################################################################
+
+
+
+
+
+#* K-Means clustering
+
+
+
+
+
+def kmeans(im: np.ndarray,
+           criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
+           nClusters = 7,
+           attempts = 30,
+           flags = cv.KMEANS_PP_CENTERS) -> np.ndarray:
+    
+    shape = im.shape
+    
+    image_type = ImageType.getImageType(im)
+    
+    if image_type is None:
+        raise ValueError("Input image must be a correct image, either gray scale or color image with or without transparency")
+    
+    nb_channels = 1
+    match image_type:
+        case ImageType.GRAY_SCALE:
+            nb_channels = 1
+        case ImageType.COLOR:
+            nb_channels = 3
+        case ImageType.COLOR_WITH_ALPHA:
+            nb_channels = 4
+    
+    flatten_im = np.float32(im.reshape(-1, nb_channels))
+    
+    _, labels, centers = cv.kmeans(flatten_im, nClusters, None, criteria, attempts, flags)
+    
+    # Display the results
+    COLORS = np.random.randint(0, 255, size=(nClusters, 3), dtype=np.uint8)
+    
+    centers = np.uint8(centers)
+    
+    segmented_image = COLORS[labels.flatten()].reshape(shape[:2] + (3,))
+    
+    return segmented_image
+
+
+
+
+
+def remove_background_kmeans(im: np.ndarray,
+                             nb_attempts: int = 7,
+                             nb_clusters: int = 7,
+                             nb_background_colors: int = 4,
+                             replacing_color: tuple | float | int = None,
+                             exclude_single_pixels: bool = False,
+                             erosion_size: int = 3,
+                             dilation_size: int = 3,
+                             box_excluding_size: tuple[int] = (10, 10),
+) -> np.ndarray:
+    """
+    Remove the background of an image.
+    This is done by segmenting the image using KMeans clustering and considering the two most common colors as the background. (ground and wall/roof)
+    Then, it detects the contours of the relevant objects.
+    
+    Parameters
+    ----------
+    im : np.ndarray
+        The image to process.
+    nb_attempts : int, optional
+        The number of attempts for the KMeans algorithm. Defaults to 7.
+    nb_clusters : int, optional
+        The number of clusters for the KMeans algorithm. Defaults to 7.
+    nb_background_colors : int, optional
+        The number of most common colors to consider as the background. Defaults to 4.
+    replacing_color : tuple | float | int, optional
+        The color to replace the background with. If None, the default color is black.
+        For grayscale images, replacing_color must be an int or float.
+        For color images, replacing_color must be a tuple of three elements.
+    exclude_single_pixels : bool, optional
+        If True, single pixels will be removed from the objects by applying erosion followed by dilation.
+        Defaults to False
+    erosion_size : int, optional
+        The size of the erosion kernel. Only used if exclude_single_pixels is True. Defaults to 3.
+    dilation_size : int, optional
+        The size of the dilation kernel. Only used if exclude_single_pixels is True. Defaults to 3.
+    box_excluding_size : tuple[int], optional
+        The size of the box to exclude objects that are too small.
+        The box is defined by (width, height). Defaults to (10, 10).
+    
+    Returns
+    -------
+    np.ndarray
+        The image with the background removed.
+    contours : list
+        The list of contours of the relevant non background objects detected.
+        
+    Raises
+    ------
+    ValueError
+        If the image has an incorrect shape
+        If replacing_color is not of the correct type.
+        If the erosion and dilation sizes are not odd numbers greater than or equal to 1.
+        If the box excluding size is not an integer or is less than 1.
+    """
+    image_type = ImageType.getImageType(im)
+    
+    if image_type is None:
+        raise ValueError("Input image must be a correct image, either gray scale or color image with or without transparency")
+    
+    # Get the right replacing color and verify the given one
+    if replacing_color is not None:
+        match image_type:
+            case ImageType.GRAY_SCALE:
+                if not isinstance(replacing_color, (int, float)):
+                    raise ValueError("The replacing color must be an int or a float for a gray scale image.")
+            case ImageType.COLOR:
+                if not isinstance(replacing_color, tuple) or len(replacing_color) != 3:
+                    raise ValueError("The replacing color must be a tuple of three elements for a color image.")
+            case ImageType.COLOR_WITH_ALPHA:
+                if not isinstance(replacing_color, tuple) or len(replacing_color) != 4:
+                    raise ValueError("The replacing color must be a tuple of four elements for a color image with transparency.")
+    else:
+        replacing_color = getBlackColor(image_type)
+    
+    
+    if not isinstance(nb_attempts, int) or nb_attempts < 1:
+        raise ValueError("The number of attempts must be an integer greater than or equal to 1.")
+    if not isinstance(nb_clusters, int) or nb_clusters < 1:
+        raise ValueError("The number of clusters must be an integer greater than or equal to 1.")
+    if not isinstance(nb_background_colors, int) or nb_background_colors < 1 or nb_background_colors > nb_clusters:
+        raise ValueError("The number of background colors must be an integer between 1 and the number of clusters.")
+    
+    
+    if erosion_size < 1:
+        raise ValueError("The erosion size must be an odd number greater than or equal to 1.")
+    if erosion_size % 2 == 0:
+        raise ValueError("The erosion size must be an odd number.")
+    
+    if dilation_size < 1:
+        raise ValueError("The dilation size must be an odd number greater than or equal to 1.")
+    if dilation_size % 2 == 0:
+        raise ValueError("The dilation size must be an odd number.")
+    
+    
+    if not isinstance(box_excluding_size, tuple):
+        if isinstance(box_excluding_size, int):
+            box_excluding_size = (box_excluding_size, box_excluding_size)
+        else:
+            raise ValueError("The box excluding size must be an integer or a tuple of two integers.")
+    else:
+        if not isinstance(box_excluding_size[0], int) or not isinstance(box_excluding_size[1], int):
+            raise ValueError("The box excluding size must be an integer or a tuple of two integers.")
+    
+    if box_excluding_size[0] < 1 or box_excluding_size[1] < 1:
+        raise ValueError("The box excluding dimensions must both be greater or equal to 1.")
+    
+    
+    NB_ATTEMPTS = nb_attempts
+    NB_CLUSTERS = nb_clusters
+    NB_BACKGROUND_COLORS = nb_background_colors
+    
+    EROSION_SIZE = erosion_size
+    DILATION_SIZE = dilation_size
+    
+    EXCLUDING_SIZE = box_excluding_size
+    
+    #TODO: Add edge detection to help segmenting the image
+    # canny_edges = cv.Canny(im, 100, 200)
+    # cv.imshow("Canny edges", canny_edges)
+    
+    seg_im = kmeans(im, nClusters=NB_CLUSTERS, attempts=NB_ATTEMPTS)
+    
+    #TODO: temporary
+    # cv.imshow("After kmeans", seg_im)
+    # seg_canny_edges = cv.Canny(seg_im, 100, 200)
+    # cv.imshow("Segmented Canny edges", seg_canny_edges)
+    
+    # Get all unique colors and their counts
+    unique_colors, counts = np.unique(seg_im.reshape(-1, 3), axis=0, return_counts=True)
+    
+    # Sort both arrays by counts (descending)
+    sorted_indices = np.argsort(counts)[::-1]
+    unique_colors = unique_colors[sorted_indices]
+    counts = counts[sorted_indices]
+    
+    # Mask the background
+    object_colors = unique_colors[NB_BACKGROUND_COLORS:]
+    
+    
+    # Creating a new image with the replacing color and adding the object colors on top
+    final_im = np.full(im.shape[:3], replacing_color, dtype=np.uint8)
+    
+    mask_int = (np.isin(seg_im.reshape(-1, 3), object_colors).all(axis=-1).reshape(seg_im.shape[:2])).astype(np.uint8)
+    
+    #TODO: temporary
+    cv.imshow("After kmeans: initial object mask", mask_int * 255)
+    
+    if exclude_single_pixels:
+        # Remove single object pixels by erosion + dilation    
+        mask_int = cv.dilate(mask_int, np.ones((DILATION_SIZE, DILATION_SIZE), np.uint8), iterations=1)
+        mask_int = cv.erode(mask_int, np.ones((EROSION_SIZE, EROSION_SIZE), np.uint8), iterations=1)
+        
+    #     #TODO: temporary
+    #     cv.imshow("Post erosion", mask_int * 255)
+        
+    # Then detect objects' contours
+    contours, hierarchy = cv.findContours(mask_int * 255, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    relevant_contours = []
+    
+    
+    #TODO: temporary
+    contour_im = np.zeros(im.shape[:2], dtype=np.uint8)
+    for contour in contours:
+        x, y, w, h = cv.boundingRect(contour)
+        
+        if w >= EXCLUDING_SIZE[0] and h >= EXCLUDING_SIZE[1]:
+            relevant_contours.append(contour)
+            cv.drawContours(contour_im, [contour], -1, 255, 1)
+    
+    #TODO: temporary
+    cv.imshow("Post contour", contour_im)
+    
+    mask = mask_int.astype(bool)
+    
+    final_im[mask] = im[mask]
+    
+    return final_im, relevant_contours
+
+
+
+
+
+
+#* Superpixels
+
+
+def slic(im: np.ndarray,
+         region_size: int = 30,
+         ruler: float = 10.0,
+         iterations: int = 10,
+         min_element_size: int = 25,
+) -> np.ndarray:
+    """
+    Perform SLIC (Simple Linear Iterative Clustering) superpixel segmentation on an image.
+    
+    Parameters
+    -----------
+    im : np.ndarray
+        Input image on which superpixel segmentation is to be performed.
+    region_size : int, optional
+        Size of the superpixel regions. Default is 30.
+    ruler : float, optional
+        Compactness parameter for the SLIC algorithm. Default is 10.0.
+    iterations : int, optional
+        Number of iterations for the SLIC algorithm. Default is 10.
+    min_element_size : int, optional
+        Minimum element size to enforce label connectivity. Default is 25.
+    
+    Returns
+    --------
+    mask_slic : np.ndarray
+        Mask of the superpixel boundaries.
+    labels : np.ndarray
+        Array of labels for each pixel.
+    num_labels : int
+        Number of superpixels generated.
+    """
+    SLIC = cv.ximgproc.SLIC
+    SLICO = cv.ximgproc.SLICO
+    MSLIC = cv.ximgproc.MSLIC
+
+    algorithm = MSLIC # can be SLIC, SLICO or MSLIC
+    
+    
+    # Apply gaussian filter to the image
+    im = cv.GaussianBlur(im, (5, 5), 0)
+    
+    if len(im.shape) == 2:
+        im = cv.cvtColor(im, cv.COLOR_GRAY2BGR)
+    elif len(im.shape) == 3 and im.shape[2] == 4:
+        im = cv.cvtColor(im, cv.COLOR_BGRA2BGR)
+    elif len(im.shape) != 3:
+        raise ValueError("Input image must be a color image")
+    
+    # Convert im to LAB color space
+    im = cv.cvtColor(im, cv.COLOR_BGR2LAB)
+    
+    # Process SLIC
+    slic = cv.ximgproc.createSuperpixelSLIC(im, algorithm, region_size=region_size, ruler=ruler)
+    
+    slic.iterate(iterations)
+    slic.enforceLabelConnectivity(min_element_size)
+    
+    mask_slic = slic.getLabelContourMask()
+    labels = slic.getLabels()
+    num_labels = slic.getNumberOfSuperpixels()
+    
+    return mask_slic, labels, num_labels
+
+
+
+
+
+
+def remove_background_superpixels(im: np.ndarray,
+) -> np.ndarray:
+    
+    mask_slic, labels, num_labels = slic(im)
+    
+    #TODO: temporary
+    contour_color = (0, 255, 0)
+    superpixel_im = im.copy()
+    superpixel_im[mask_slic != 0] = contour_color
+    
+    cv.imshow("Superpixel image", superpixel_im)
+    
+    
+    # Compute average color of each superpixel
+    average_colors = []
+    for i in range(num_labels):
+        mask = (labels == i)
+        avg_color = cv.mean(im, mask.astype(np.uint8) * 255)[:3]
+        average_colors.append(avg_color)
+    average_colors = np.array(average_colors)
+    
+    # Clustering using DBSCAN
+    dbscan = DBSCAN(eps=10, min_samples=2, metric="euclidean")
+    clusters = dbscan.fit_predict(average_colors)
+    
+    output_image = np.zeros_like(im)
+    for i in range(num_labels):
+        cluster_id = clusters[i]
+        if cluster_id != -1:
+            mask = (labels == i)
+            output_image[mask] = average_colors[i]
+        else:
+            mask = (labels == i)
+            output_image[mask] = (0, 0, 255)
+    
+    #! COMMENTS: Extinguishers are almost always classified as noise
+    #! Superpixels won't be used therefore.
+    
+    
+    cv.imshow("Clustered image", output_image)
+
+
+
+
+
+
+#?################################################################################################
+#?                                                                                               #
+#?                                 COMPUTING SIMILARITY MAPS                                     #
+#?                                                                                               #
+#?################################################################################################
+
+
+
+
+
+# TODO: Remove?
 def custom_similarity(image: np.ndarray,
                       template: np.ndarray,
                       weight_euclidean: float = 1.0,
@@ -524,7 +1290,7 @@ def custom_similarity(image: np.ndarray,
     return result
 
 
-
+# TODO: Remove?
 def custom_matching(im: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
     Compute the squared difference map between the two images.

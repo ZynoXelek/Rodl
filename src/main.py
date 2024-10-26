@@ -30,7 +30,7 @@ def main():
     
     t = time.time()
     print("Beginning advanced matching...")
-    final_im = matcher.advanceMatch(template_im, mode=Mode.SQDIFF,
+    final_im = matcher.advanceMatch(template_im, mode=MatchingMode.SQDIFF,
                                     range_fx=np.arange(0.8, 1.21, 0.1), range_fy=np.arange(0.8, 1.21, 0.1),
                                     # custom_method=custom_matching, custom_case=Case.MIN,
                                     show_progress=True,
