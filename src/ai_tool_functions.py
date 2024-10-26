@@ -243,3 +243,9 @@ def choose_new_name(train_model_folder: str, name: str, default_name: str = 'tra
     else:
         new_name = name
     return new_name
+
+def convert_seconds(total_seconds: int):
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return hours, minutes, seconds

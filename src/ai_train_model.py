@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 from ai_tool_functions import *
+import time as t
 
 def train():
     dataset_folder = 'dataset/FireExtinguisher/'
@@ -20,9 +21,15 @@ def train():
     
     # Load a COCO-pretrained YOLO11n mode
     model = YOLO(ref_model_path)
+    
+    t1 = t.time()
 
     # Train the model on the dataset
-    model.train(data = yaml_path, epochs = 10, imgsz = 640, project = train_models_folder, name = new_model_name)
-
+    model.train(data = yaml_path, epochs = 1, imgsz = 10, project = train_models_folder, name = new_model_name)
+    
+    delta_t = t.time() - t1
+    hour, min, sec = convert_seconds(int(delta_t))
+    print(f'Training executed in {hour} hours, {min} mins and {sec} secs.')
+        
 if __name__ == '__main__':
 	train()
