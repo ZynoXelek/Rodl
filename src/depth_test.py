@@ -1,6 +1,7 @@
 import os
 import cv2 as cv
 import numpy as np
+import time
 
 from glob import glob
 
@@ -73,53 +74,68 @@ def main_kmeans():
     file_paths = glob(image_path)
     
     # color movie
-    color_movie = [cv.imread(file) for file in file_paths]
+    color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)
+                   for file in file_paths]
     
     
     # Base Template
     base_template = cv.imread("res/extinguisher-template.png", cv.IMREAD_UNCHANGED)
     base_template = crop(base_template)
     base_template = setTransparentPixelsTo(base_template,
-                                           #color=(255, 255, 255, 0),
+                                        #    color=(255, 255, 255, 0),
                                            )
-    base_template = cv.cvtColor(base_template, cv.COLOR_BGRA2BGR)
     factor = 1/6
+    
+    # # Temporary test
+    # th, tw = base_template.shape[:2]
+    # for t in np.arange(-180, 180, 1):
+    #     expected_size = computeRotatedRequiredSize((tw, th), t)
+    #     actual_size = rotateImageWithoutLoss(base_template, t).shape[:2][::-1]
+        
+    #     print("Angle:", t,
+    #           " Expected size: ", expected_size,
+    #           " Actual size: ", actual_size,
+    #           " difference: ", np.array(expected_size) - np.array(actual_size))
+    
+    # cv.imshow("Base template, rotated (1)", rotateImage(base_template, -46))
+    # cv.imshow("Base template, rotated (2)", rotateImageWithoutLoss(base_template, -116, (255, 255, 255, 0)))
     base_template = cv.resize(base_template, None, None, fx=factor, fy=factor)
     th, tw = base_template.shape[:2]
     
     cv.imshow("Base template", base_template)
     waitNextKey(0)
     
-    # create advance matcher
-    matcher = TemplateAdvancedMatcher(None)
     
-    box_factor = 0.5
-    box_limits = (int(tw * box_factor), int(th * box_factor))
-    print("Box limits that will be used: ", box_limits)
+    # box_factor = 0.5
+    # box_limits = (int(tw * box_factor), int(th * box_factor))
+    # print("Box limits that will be used: ", box_limits)
+    
+    # create advance matcher
+    matcher = TemplateAdvancedMatcher(TemplateAdvancedMatcher.CLASSIC_MODE)
     
     for im in color_movie:
         
-        objects_im, contours = remove_background_kmeans(im,
-                                                        # replacing_color=(255, 255, 255),
-                                                        exclude_single_pixels=True,
-                                                        #  box_excluding_size=box_limits
-                                                        )
+        # objects_im, contours = remove_background_kmeans(im,
+        #                                                 # replacing_color=(255, 255, 255),
+        #                                                 exclude_single_pixels=True,
+        #                                                 #  box_excluding_size=box_limits
+        #                                                 )
         
         
-        for contour in contours:
-            x, y, w, h = cv.boundingRect(contour)
-            cv.rectangle(objects_im, (x, y), (x+w, y+h), (0, 255, 0), 1)
+        # for contour in contours:
+        #     x, y, w, h = cv.boundingRect(contour)
+        #     cv.rectangle(objects_im, (x, y), (x+w, y+h), (0, 255, 0), 1)
         
         
-        matcher.setImage(im)
-        
-        # final_im = matcher.advanceMatch(base_template, mode=Mode.SQDIFF,)
+        t = time.time()
+        final_im = matcher.fullMatch(im, base_template, show_progress = True)
+        print("Time elapsed to compute the final image: ", time.time() - t)
         
         
         cv.imshow("Color movie", im)
-        cv.imshow("Object image", objects_im)
-        # cv.imshow("Final image", final_im)
-        waitNextKey(0)
+        # cv.imshow("Object image", objects_im)
+        cv.imshow("Final image", final_im)
+        waitNextKey(1)
     
     print("Treatment finished!")
     waitNextKey(0)
