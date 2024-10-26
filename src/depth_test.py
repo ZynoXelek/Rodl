@@ -74,22 +74,22 @@ def main_kmeans():
     file_paths = glob(image_path)
     
     # color movie
-    color_movie = [cv.imread(file) for file in file_paths]              #* Use BGR images
-    # color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)    #* Use BGRA images
-    #                for file in file_paths]
+    # color_movie = [cv.imread(file) for file in file_paths]              #* Use BGR images
+    color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)    #* Use BGRA images
+                   for file in file_paths]
     
     
     # Base Template
     base_template = cv.imread("res/extinguisher-template.png", cv.IMREAD_UNCHANGED)
     base_template = crop(base_template)
     base_template = setTransparentPixelsTo(base_template,
-                                        #    color=(255, 255, 255, 0),
+                                           color=(255, 255, 255, 0),
                                            )
     factor = 1/7
     
     base_template = cv.resize(base_template, None, None, fx=factor, fy=factor)
     
-    base_template = cv.cvtColor(base_template, cv.COLOR_BGRA2BGR)       #* Use BGR template
+    # base_template = cv.cvtColor(base_template, cv.COLOR_BGRA2BGR)       #* Use BGR template
     
     cv.imshow("Base template", base_template)
     waitNextKey(0)
@@ -98,18 +98,28 @@ def main_kmeans():
     # create advance matcher
     matcher = TemplateAdvancedMatcher(TemplateAdvancedMatcher.AI_MODE)
     
+    matching_mode = MatchingMode.SQDIFF
     range_fx = np.arange(0.2, 1.21, 0.2)
     range_fy = np.arange(0.4, 1.51, 0.2)
-    range_theta = np.arange(-30, 31, 10)
+    range_theta = np.arange(-10, 11, 10)
     
+    
+    # custom_matching_method = custom_matching        # or None
+    # custom_case = Case.MIN                          # or Case.MAX
+    
+    
+    # for im in color_movie[30:40]:
     for im in color_movie:
         
         t = time.time()
         final_im = matcher.fullMatch(im,
                                      base_template,
+                                     matching_mode=matching_mode,
                                      range_fx=range_fx,
                                      range_fy=range_fy,
                                      range_theta=range_theta,
+                                    #  custom_matching_method=custom_matching_method,
+                                    #  custom_case=custom_case,
                                      show_progress = True)
         print("Time elapsed to compute the final image: ", time.time() - t)
         

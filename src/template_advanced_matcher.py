@@ -196,32 +196,6 @@ class TemplateAdvancedMatcher():
     
     
     
-    def getSimilarityMap(self) -> np.ndarray:
-        """
-        Getter for the similarity map.
-        
-        Returns
-        -------
-        similarity_map: np.ndarray
-            The similarity map.
-        """
-        return self._similarity_map
-    
-    
-    def getSimilarityStats(self) -> list[float]:
-        """
-        Getter for the similarity statistics.
-        It is ordered this way: [min_val, max_val, min_index, max_index, mean_val, median_val]
-        
-        Returns
-        -------
-        similarity_stats: list[float]
-            The similarity statistics.
-        """
-        return self._similarity_stats
-    
-    
-    
     
     
     #* Private helper methods
@@ -277,7 +251,7 @@ class TemplateAdvancedMatcher():
         
         if resize_rotated:
             for k, theta in enumerate(range_theta):
-                template_size_table[:, :, k] = computeRotatedRequiredSize(base_sizes, theta)
+                template_size_table[:, :, k] = computeRotatedRequiredSize(base_sizes, theta, assert_exact=True)
         else:
             for k in range(lt):
                 template_size_table[:, :, k] = base_sizes
@@ -419,7 +393,7 @@ class TemplateAdvancedMatcher():
         if similarity_map.size == 0 or np.all(np.isnan(similarity_map)):
             return [np.nan] * 6
         
-        min_val = np.min(similarity_map)
+        min_val = np.nanmin(similarity_map)
         min_index = np.nanargmin(similarity_map)
         min_index = np.unravel_index(min_index, similarity_map.shape)
 
@@ -520,7 +494,7 @@ class TemplateAdvancedMatcher():
         
         # Dividing the similarity values by the number of pixels in the template to limit big templates from being
         # penalized compared to small templates
-        similarity = matching_method(image, template) / (tw * th) #TODO: Division to be removed?
+        similarity = matching_method(image, template) / ((tw * th)**(3/2)) #TODO: Division to be removed?
         
         return similarity
     
@@ -639,7 +613,8 @@ class TemplateAdvancedMatcher():
         best_value: float
             similarity score associated to the best match.           
         """
-        
+        print("similary case : ", similarity_case)
+        print(similarity_stats)
         min_max_value = similarity_stats[similarity_case[0]]
         min_max_index = similarity_stats[similarity_case[1]] # (fx_i, fy_j, theta_k, height, width)
         
@@ -827,7 +802,18 @@ class TemplateAdvancedMatcher():
         template_h, template_w = base_template.shape[:2]
         
         #* Pre-matching method: detect sub-images of the current image to do matching on
-        relevant_boxes = self._pre_matching_method(image)
+        match mode:
+            case TemplateAdvancedMatcher.CLASSIC_MODE:
+                relevant_boxes = self._pre_matching_method(image)
+            case TemplateAdvancedMatcher.AI_MODE:
+                supported_im = None
+                match image_type:
+                    case ImageType.COLOR_WITH_ALPHA:
+                        supported_im = cv.cvtColor(image, cv.COLOR_RGBA2RGB)
+                    case ImageType.GRAY_SCALE:
+                        supported_im = cv.cvtColor(image, cv.COLOR_GRAY2RGB)
+                relevant_boxes = self._pre_matching_method(supported_im)
+                
         
         cropped_images = []
         for box in relevant_boxes:

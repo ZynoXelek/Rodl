@@ -175,7 +175,8 @@ def _rotateImageIgnoreNan(image: np.ndarray, angle: float) -> np.ndarray:
 
 
 
-def computeRotatedRequiredSize(image_size: tuple[int], angle: float) -> tuple[int]:
+def computeRotatedRequiredSize(image_size: tuple[int], angle: float,
+                               assert_exact: bool = False) -> tuple[int]:
     """
     Compute the required size for an image after rotation by the given angle.
     The image is rotated around its center.
@@ -186,6 +187,10 @@ def computeRotatedRequiredSize(image_size: tuple[int], angle: float) -> tuple[in
         size of the image, in the order (width, height)
     angle: float
         angle in degrees to rotate the image
+    assert_exact: bool, optional
+        if True, the returned size will be the exact size required to keep all the information.
+        Unrecommended if you don't need the exact size as it will test it.
+        Defaults to False.
     
     Returns
     -------
@@ -194,12 +199,28 @@ def computeRotatedRequiredSize(image_size: tuple[int], angle: float) -> tuple[in
     """
     image_size = np.array(image_size)
     w, h = image_size[..., 0], image_size[..., 1]
-    rad_angle = np.radians(angle)
-    c = np.cos(rad_angle)
-    s = np.sin(rad_angle)
     
-    H = (np.ceil(h * abs(c) + w * abs(s))).astype(int)
-    W = (np.ceil(h * abs(s) + w * abs(c))).astype(int)
+    if not assert_exact:
+        rad_angle = np.radians(angle)
+        c = np.cos(rad_angle)
+        s = np.sin(rad_angle)
+        
+        H = (np.ceil(h * abs(c) + w * abs(s))).astype(int) # dimension is 
+        W = (np.ceil(h * abs(s) + w * abs(c))).astype(int)
+    else:
+        H = np.zeros_like(h)
+        W = np.zeros_like(w)
+        
+        I, J = np.shape(H)
+        for i in range(I):
+            for j in range(J):
+                width, height = w[i, j], h[i, j]
+                dummy_image = np.zeros((height, width), dtype=np.uint8)
+                rotated_image = rotateImageWithoutLoss(dummy_image, angle)
+                new_height, new_width = rotated_image.shape
+                H[i, j] = new_height
+                W[i, j] = new_width
+    
     
     new_image_size = np.stack((W, H), axis=-1)
     
