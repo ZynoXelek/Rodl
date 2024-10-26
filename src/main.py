@@ -7,8 +7,6 @@ from template_advanced_matcher import *
 
 def main():
     """Main function of the program."""
-    
-    
     template_im = cv.imread("res/extinguisher-template.png", cv.IMREAD_UNCHANGED)
     im = cv.imread("res/testing-ref.png")
     

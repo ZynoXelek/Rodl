@@ -4,11 +4,11 @@ import numpy as np
 
 from enum import Enum
 
-# import os
-# from ultralytics import YOLO
+import os
+from ultralytics import YOLO
 
 from tool_functions import *
-# from ia_tool_functions import *
+from ai_tool_functions import *
 
 class Case(Enum):
     """
@@ -67,7 +67,7 @@ class TemplateAdvancedMatcher():
     
     # --- AI ---
     
-    AI_MODEL_FOLDER = 'res/train_models/training_model1/'
+    AI_MODEL_FOLDER = 'res/train_models/training_model2/'
     AI_MODEL_FILE = 'weights/best.pt'
     
     #* Constructor
@@ -128,7 +128,7 @@ class TemplateAdvancedMatcher():
                 self.resetClassicModeVariables()
                 self.setClassicModeVariables(*args, **kwargs)
             case TemplateAdvancedMatcher.AI_MODE:
-                self._pre_matching_method = TemplateAdvancedMatcher._deepLearningBoxesDetection
+                self._pre_matching_method = self._deepLearningBoxesDetection
     
     def reset(self) -> None:
         """
@@ -196,36 +196,9 @@ class TemplateAdvancedMatcher():
     
     
     
-    def getSimilarityMap(self) -> np.ndarray:
-        """
-        Getter for the similarity map.
-        
-        Returns
-        -------
-        similarity_map: np.ndarray
-            The similarity map.
-        """
-        return self._similarity_map
-    
-    
-    def getSimilarityStats(self) -> list[float]:
-        """
-        Getter for the similarity statistics.
-        It is ordered this way: [min_val, max_val, min_index, max_index, mean_val, median_val]
-        
-        Returns
-        -------
-        similarity_stats: list[float]
-            The similarity statistics.
-        """
-        return self._similarity_stats
-    
-    
-    
     
     
     #* Private helper methods
-    
     @staticmethod
     def _computeTemplateSizeTable(template_width: int,
                                   template_height: int,
@@ -278,14 +251,12 @@ class TemplateAdvancedMatcher():
         
         if resize_rotated:
             for k, theta in enumerate(range_theta):
-                template_size_table[:, :, k] = computeRotatedRequiredSize(base_sizes, theta)
+                template_size_table[:, :, k] = computeRotatedRequiredSize(base_sizes, theta, assert_exact=True)
         else:
             for k in range(lt):
                 template_size_table[:, :, k] = base_sizes
         
         return template_size_table
-    
-    
     
     @staticmethod
     def _extractValidTemplateSizeTable(template_size_table: np.ndarray,
@@ -419,11 +390,10 @@ class TemplateAdvancedMatcher():
         similarity_stats: list[float]
             The similarity statistics with the following order: [min_val, max_val, min_index, max_index, mean_val, median_val]
         """
-        
         if similarity_map.size == 0 or np.all(np.isnan(similarity_map)):
             return [np.nan] * 6
         
-        min_val = np.min(similarity_map)
+        min_val = np.nanmin(similarity_map)
         min_index = np.nanargmin(similarity_map)
         min_index = np.unravel_index(min_index, similarity_map.shape)
 
@@ -494,26 +464,24 @@ class TemplateAdvancedMatcher():
         relevant_boxes: list[tuple[int]]
             The list of relevant boxes found in the image in the format (x, y, w, h).
         """
-        raise NotImplementedError("The deep learning method is not implemented yet.")
-        # relevant_boxes = []
+        relevant_boxes = []
         
-        # model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
+        model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
         
-        # model = YOLO(model_path)
+        model = YOLO(model_path)
         
-        # boxes_info_list = compute_yolo_boxes(model,
-        #                                 image,
-        #                                 target_classes_id = [0],
-        #                                 target_classes_names = ['extinguisher'],
-        #                                 show_result = True,
-        #                                 )
+        boxes_info_list = compute_yolo_boxes(model,
+                                        image,
+                                        target_classes_id = [0],
+                                        target_classes_names = ['extinguisher'],
+                                        )
         
-        # for box_in boxes_info_list:
-        #     x, y = box_info['coord']
-        #     w_box, h_box = box_info['size']
-        #     relevant_boxes.append((x, y, w_box, h_box))
+        for box_info in boxes_info_list:
+            x, y = box_info['coord']
+            w_box, h_box = box_info['size']
+            relevant_boxes.append((x, y, w_box, h_box))
         
-        # return relevant_boxes
+        return relevant_boxes
     
     
     
@@ -526,7 +494,7 @@ class TemplateAdvancedMatcher():
         
         # Dividing the similarity values by the number of pixels in the template to limit big templates from being
         # penalized compared to small templates
-        similarity = matching_method(image, template) / (tw * th) #TODO: Division to be removed?
+        similarity = matching_method(image, template) / ((tw * th)**(3/2)) #TODO: Division to be removed?
         
         return similarity
     
@@ -645,7 +613,8 @@ class TemplateAdvancedMatcher():
         best_value: float
             similarity score associated to the best match.           
         """
-        
+        print("similary case : ", similarity_case)
+        print(similarity_stats)
         min_max_value = similarity_stats[similarity_case[0]]
         min_max_index = similarity_stats[similarity_case[1]] # (fx_i, fy_j, theta_k, height, width)
         
@@ -656,11 +625,9 @@ class TemplateAdvancedMatcher():
         best_x, best_y = best_loc
 
         return (best_x, best_y, best_tw, best_th), min_max_value
-        
     
     
     #* Main methods
-
     def computeSimilarityMap(self,
                              image: np.ndarray,
                              base_template: np.ndarray,
@@ -719,7 +686,6 @@ class TemplateAdvancedMatcher():
         """
         
         #TODO: verif on sizes, shapes, etc...
-        
         matching_method = None
         
         if custom_matching_method is None:
@@ -836,13 +802,23 @@ class TemplateAdvancedMatcher():
         template_h, template_w = base_template.shape[:2]
         
         #* Pre-matching method: detect sub-images of the current image to do matching on
-        relevant_boxes = self._pre_matching_method(image)
+        match mode:
+            case TemplateAdvancedMatcher.CLASSIC_MODE:
+                relevant_boxes = self._pre_matching_method(image)
+            case TemplateAdvancedMatcher.AI_MODE:
+                supported_im = None
+                match image_type:
+                    case ImageType.COLOR_WITH_ALPHA:
+                        supported_im = cv.cvtColor(image, cv.COLOR_RGBA2RGB)
+                    case ImageType.GRAY_SCALE:
+                        supported_im = cv.cvtColor(image, cv.COLOR_GRAY2RGB)
+                relevant_boxes = self._pre_matching_method(supported_im)
+                
         
         cropped_images = []
         for box in relevant_boxes:
             x, y, w, h = box
             cropped_images.append(image[y:y+h, x:x+w]) # Numpy uses height, width while boxes are in width, height format
-        
     
         #* Compute the template size table for the base template if it is not already computed
         
@@ -859,7 +835,6 @@ class TemplateAdvancedMatcher():
             
             original_template_size_table = TemplateAdvancedMatcher._computeTemplateSizeTable(template_w, template_h, range_fx, range_fy, range_theta)
             self._original_template_size_table = original_template_size_table
-        
         
         #* Matching on each cropped image to get similarity maps, stats and best matches
         
@@ -932,17 +907,9 @@ class TemplateAdvancedMatcher():
         self.final_image = final_image
         
         return final_image#, best_matches, self._similarity_stats, self._similarity_maps
-    
-    
-    #TODO:
-    # Je propose:
-    # - On enlève l'image de l'objet, ainsi que quasi tous les attributs.
-    # - Toutes les méthodes déjà crées là peuvent devenir statiques, et on vire les get et self.
-    # - On ajoute une méthode d'instance qui sera 'all-in' et qui prendra tous les paramètres nécessaires: la vidéo en entière ou chaque image.
-    # - Elle traite le tout et stocke cette fois dans l'objets les résultats uniquement.
-    # - On y récupèrera les images finales, les stats, les scores de confiance, etc...
-    # Du coup soit on fait un traitement à postériori avec tout d'un coup, soit au frame par frame à voir.
-    # Et du coup on devra sans doutes garder quelques attributs privés pour ne pas tout recalculer à chaque fois. Mais ils seront cachés de l'utilisateur quoi.
-    # Je pense que dans l'idée, la méthode ne renvoie que les données, pas l'image finale.
-    # Et on a une fonction statique qui prend exactement (ou partiellement) ces données là et qui construit l'image finale pour l'affichage.
-    # Avec peut-être d'autre fonctions statiques pour reconstruire les images des étapes intermédiaires si on veut voir ce qu'il se passe.
+
+
+
+#TODO:
+# - Optimize classical box detection
+# - And most importantly, optimize the matching inside a reduced box.
