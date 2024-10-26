@@ -494,7 +494,7 @@ class TemplateAdvancedMatcher():
         
         # Dividing the similarity values by the number of pixels in the template to limit big templates from being
         # penalized compared to small templates
-        similarity = matching_method(image, template) / ((tw * th)**(3/2)) #TODO: Division to be removed?
+        similarity = matching_method(image, template) / ((tw * th)**(3/2)) #TODO: Division to be reworked?
         
         return similarity
     
@@ -911,5 +911,6 @@ class TemplateAdvancedMatcher():
 
 
 #TODO:
-# - Optimize classical box detection
-# - And most importantly, optimize the matching inside a reduced box.
+# - Most importantly, optimize the matching inside a reduced box.
+# - Optional: optimize classical box detection
+

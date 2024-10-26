@@ -80,10 +80,10 @@ def main_kmeans():
     
     
     # Base Template
-    base_template = cv.imread("res/extinguisher-template.png", cv.IMREAD_UNCHANGED)
+    base_template = cv.imread("res/extinguisher-tube-template.png", cv.IMREAD_UNCHANGED)
     base_template = crop(base_template)
     base_template = setTransparentPixelsTo(base_template,
-                                           color=(255, 255, 255, 0),
+                                        #    color=(255, 255, 255, 0),
                                            )
     factor = 1/7
     
@@ -122,6 +122,31 @@ def main_kmeans():
                                     #  custom_case=custom_case,
                                      show_progress = True)
         print("Time elapsed to compute the final image: ", time.time() - t)
+        
+        
+        
+        #TODO:
+        #
+        # Add new results to the list of matches
+        # - If a depth map is associated to this image:
+        #           Use it to compute the distance to the camera, and therefore the position with the
+        #           To do so, take the green box and compute the distance to the center of the box
+        # projection matrix written in the camera calibration file
+        # - Else if not, either:
+        #           ignore this image for depth computation (+)
+        #           use the previous depth map to do the same computation
+        #           try to match to the previous detected objects and use the same position
+        #
+        #
+        # Apply a score to the matches
+        # - If the score is too low, ignore the match (classic case, use similarity not normalized?)
+        # We can then normalize each similarity map if we want to.
+        # - If the score is high enough, it is a potential extinguisher
+        # - Among potential extinguishers, try to compute delta distance to the sides to detect fake extinguishers?
+        #
+        
+        
+        
         
         
         cv.imshow("Color movie", im)
