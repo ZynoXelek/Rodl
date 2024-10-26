@@ -4,11 +4,11 @@ import numpy as np
 
 from enum import Enum
 
-# import os
-# from ultralytics import YOLO
+import os
+from ultralytics import YOLO
 
 from tool_functions import *
-# from ia_tool_functions import *
+from ai_tool_functions import *
 
 class Case(Enum):
     """
@@ -67,7 +67,7 @@ class TemplateAdvancedMatcher():
     
     # --- AI ---
     
-    AI_MODEL_FOLDER = 'res/train_models/training_model1/'
+    AI_MODEL_FOLDER = 'res/train_models/training_model2/'
     AI_MODEL_FILE = 'weights/best.pt'
     
     #* Constructor
@@ -128,7 +128,7 @@ class TemplateAdvancedMatcher():
                 self.resetClassicModeVariables()
                 self.setClassicModeVariables(*args, **kwargs)
             case TemplateAdvancedMatcher.AI_MODE:
-                self._pre_matching_method = TemplateAdvancedMatcher._deepLearningBoxesDetection
+                self._pre_matching_method = self._deepLearningBoxesDetection
     
     def reset(self) -> None:
         """
@@ -490,26 +490,24 @@ class TemplateAdvancedMatcher():
         relevant_boxes: list[tuple[int]]
             The list of relevant boxes found in the image in the format (x, y, w, h).
         """
-        raise NotImplementedError("The deep learning method is not implemented yet.")
-        # relevant_boxes = []
+        relevant_boxes = []
         
-        # model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
+        model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
         
-        # model = YOLO(model_path)
+        model = YOLO(model_path)
         
-        # boxes_info_list = compute_yolo_boxes(model,
-        #                                 image,
-        #                                 target_classes_id = [0],
-        #                                 target_classes_names = ['extinguisher'],
-        #                                 show_result = True,
-        #                                 )
+        boxes_info_list = compute_yolo_boxes(model,
+                                        image,
+                                        target_classes_id = [0],
+                                        target_classes_names = ['extinguisher'],
+                                        )
         
-        # for box_in boxes_info_list:
-        #     x, y = box_info['coord']
-        #     w_box, h_box = box_info['size']
-        #     relevant_boxes.append((x, y, w_box, h_box))
+        for box_info in boxes_info_list:
+            x, y = box_info['coord']
+            w_box, h_box = box_info['size']
+            relevant_boxes.append((x, y, w_box, h_box))
         
-        # return relevant_boxes
+        return relevant_boxes
     
     
     
@@ -835,7 +833,6 @@ class TemplateAdvancedMatcher():
         for box in relevant_boxes:
             x, y, w, h = box
             cropped_images.append(image[y:y+h, x:x+w]) # Numpy uses height, width while boxes are in width, height format
-        
     
         #* Compute the template size table for the base template if it is not already computed
         
@@ -852,7 +849,6 @@ class TemplateAdvancedMatcher():
             
             original_template_size_table = TemplateAdvancedMatcher._computeTemplateSizeTable(template_w, template_h, range_fx, range_fy, range_theta)
             self._original_template_size_table = original_template_size_table
-        
         
         #* Matching on each cropped image to get similarity maps, stats and best matches
         
@@ -925,17 +921,9 @@ class TemplateAdvancedMatcher():
         self.final_image = final_image
         
         return final_image#, best_matches, self._similarity_stats, self._similarity_maps
-    
-    
-    #TODO:
-    # Je propose:
-    # - On enlève l'image de l'objet, ainsi que quasi tous les attributs.
-    # - Toutes les méthodes déjà crées là peuvent devenir statiques, et on vire les get et self.
-    # - On ajoute une méthode d'instance qui sera 'all-in' et qui prendra tous les paramètres nécessaires: la vidéo en entière ou chaque image.
-    # - Elle traite le tout et stocke cette fois dans l'objets les résultats uniquement.
-    # - On y récupèrera les images finales, les stats, les scores de confiance, etc...
-    # Du coup soit on fait un traitement à postériori avec tout d'un coup, soit au frame par frame à voir.
-    # Et du coup on devra sans doutes garder quelques attributs privés pour ne pas tout recalculer à chaque fois. Mais ils seront cachés de l'utilisateur quoi.
-    # Je pense que dans l'idée, la méthode ne renvoie que les données, pas l'image finale.
-    # Et on a une fonction statique qui prend exactement (ou partiellement) ces données là et qui construit l'image finale pour l'affichage.
-    # Avec peut-être d'autre fonctions statiques pour reconstruire les images des étapes intermédiaires si on veut voir ce qu'il se passe.
+
+
+
+#TODO:
+# - Optimize classical box detection
+# - And most importantly, optimize the matching inside a reduced box.

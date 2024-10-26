@@ -74,8 +74,9 @@ def main_kmeans():
     file_paths = glob(image_path)
     
     # color movie
-    color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)
-                   for file in file_paths]
+    color_movie = [cv.imread(file) for file in file_paths]              #* Use BGR images
+    # color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)    #* Use BGRA images
+    #                for file in file_paths]
     
     
     # Base Template
@@ -84,51 +85,32 @@ def main_kmeans():
     base_template = setTransparentPixelsTo(base_template,
                                         #    color=(255, 255, 255, 0),
                                            )
-    factor = 1/6
+    factor = 1/7
     
-    # # Temporary test
-    # th, tw = base_template.shape[:2]
-    # for t in np.arange(-180, 180, 1):
-    #     expected_size = computeRotatedRequiredSize((tw, th), t)
-    #     actual_size = rotateImageWithoutLoss(base_template, t).shape[:2][::-1]
-        
-    #     print("Angle:", t,
-    #           " Expected size: ", expected_size,
-    #           " Actual size: ", actual_size,
-    #           " difference: ", np.array(expected_size) - np.array(actual_size))
-    
-    # cv.imshow("Base template, rotated (1)", rotateImage(base_template, -46))
-    # cv.imshow("Base template, rotated (2)", rotateImageWithoutLoss(base_template, -116, (255, 255, 255, 0)))
     base_template = cv.resize(base_template, None, None, fx=factor, fy=factor)
-    th, tw = base_template.shape[:2]
+    
+    base_template = cv.cvtColor(base_template, cv.COLOR_BGRA2BGR)       #* Use BGR template
     
     cv.imshow("Base template", base_template)
     waitNextKey(0)
     
     
-    # box_factor = 0.5
-    # box_limits = (int(tw * box_factor), int(th * box_factor))
-    # print("Box limits that will be used: ", box_limits)
-    
     # create advance matcher
-    matcher = TemplateAdvancedMatcher(TemplateAdvancedMatcher.CLASSIC_MODE)
+    matcher = TemplateAdvancedMatcher(TemplateAdvancedMatcher.AI_MODE)
+    
+    range_fx = np.arange(0.2, 1.21, 0.2)
+    range_fy = np.arange(0.4, 1.51, 0.2)
+    range_theta = np.arange(-30, 31, 10)
     
     for im in color_movie:
         
-        # objects_im, contours = remove_background_kmeans(im,
-        #                                                 # replacing_color=(255, 255, 255),
-        #                                                 exclude_single_pixels=True,
-        #                                                 #  box_excluding_size=box_limits
-        #                                                 )
-        
-        
-        # for contour in contours:
-        #     x, y, w, h = cv.boundingRect(contour)
-        #     cv.rectangle(objects_im, (x, y), (x+w, y+h), (0, 255, 0), 1)
-        
-        
         t = time.time()
-        final_im = matcher.fullMatch(im, base_template, show_progress = True)
+        final_im = matcher.fullMatch(im,
+                                     base_template,
+                                     range_fx=range_fx,
+                                     range_fy=range_fy,
+                                     range_theta=range_theta,
+                                     show_progress = True)
         print("Time elapsed to compute the final image: ", time.time() - t)
         
         
@@ -143,32 +125,32 @@ def main_kmeans():
 
 
 
-def main_superpixels():
-    # Get all images
-    initial_folder_path = "dataset/raw/test/"
-    color_folder_path = os.path.join(initial_folder_path, "camera_color_image_raw/")
+# def main_superpixels(): #! Not working well, extinguishers are noise
+#     # Get all images
+#     initial_folder_path = "dataset/raw/test/"
+#     color_folder_path = os.path.join(initial_folder_path, "camera_color_image_raw/")
     
     
-    image_path = os.path.join(color_folder_path, "*.png")
-    file_paths = glob(image_path)
+#     image_path = os.path.join(color_folder_path, "*.png")
+#     file_paths = glob(image_path)
     
-    # color movie
-    color_movie = [cv.imread(file) for file in file_paths]
+#     # color movie
+#     color_movie = [cv.imread(file) for file in file_paths]
     
-    for im in color_movie:
+#     for im in color_movie:
         
-        remove_background_superpixels(im)
-        
-        
+#         remove_background_superpixels(im)
         
         
         
-        cv.imshow("Color movie", im)
-        waitNextKey(0)
+        
+        
+#         cv.imshow("Color movie", im)
+#         waitNextKey(0)
     
-    print("Treatment finished!")
-    waitNextKey(0)
-    cv.destroyAllWindows()
+#     print("Treatment finished!")
+#     waitNextKey(0)
+#     cv.destroyAllWindows()
     
 
 
@@ -176,7 +158,6 @@ def main_superpixels():
 def main():
     """Main function of the program."""
     main_kmeans()
-    # main_superpixels() #! Not working well, extinguishers are noise
 
 
 
