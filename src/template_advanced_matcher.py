@@ -48,6 +48,8 @@ class TemplateAdvancedMatcher():
     RECTANGLE_COLOR = (0, 255, 0)
     RECTANGLE_THICKNESS = 1
     
+    BOX_LIMIT_RATIO = 0.2
+    
     # --- Modes ---
     
     CLASSIC_MODE = 0
@@ -103,7 +105,7 @@ class TemplateAdvancedMatcher():
         """
         Setter for the object-detection mode.
         You can additionally set the mode variables with the given arguments and keyword arguments.
-        You can also do so by calling the setClassicModeVariables() method afterwards.
+        You can also do so by calling the setClassicModeVariables() or setAIModelVariables() methods afterwards.
         
         Parameters
         ----------
@@ -129,6 +131,8 @@ class TemplateAdvancedMatcher():
                 self.setClassicModeVariables(*args, **kwargs)
             case TemplateAdvancedMatcher.AI_MODE:
                 self._pre_matching_method = self._deepLearningBoxesDetection
+                self.resetAIModeVariables()
+                self.setAIModeVariables(*args, **kwargs)
     
     def reset(self) -> None:
         """
@@ -193,6 +197,32 @@ class TemplateAdvancedMatcher():
         self._classic_erosion_size = erosion_size if erosion_size is not None else self._classic_erosion_size
         self._classic_dilation_size = dilation_size if dilation_size is not None else self._classic_dilation_size
         self._classic_box_excluding_size = box_excluding_size if box_excluding_size is not None else self._classic_box_excluding_size
+    
+    
+    
+    def resetAIModeVariables(self) -> None:
+        """
+        Reset the variables for the AI mode of the template matching to use the default class ones.
+        """
+        self._ai_model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
+        self._target_classes_id = [0]
+        self._target_classes_names = ['extinguisher']
+    
+    
+    
+    
+    def setAIModeVariables(self,
+                           model_path: str = None,
+                           target_classes_id: list[int] = None,
+                           target_classes_names: list[str] = None,
+    ) -> None:
+        """
+        Sets the variables for the AI mode of the template matching.
+        If a variable is not provided, the value will not change.
+        """
+        self._ai_model_path = model_path if model_path is not None else self._ai_model_path
+        self._target_classes_id = target_classes_id if target_classes_id is not None else self._target_classes_id
+        self._target_classes_names = target_classes_names if target_classes_names is not None else self._target_classes_names
     
     
     
@@ -466,14 +496,12 @@ class TemplateAdvancedMatcher():
         """
         relevant_boxes = []
         
-        model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
-        
-        model = YOLO(model_path)
+        model = YOLO(self._ai_model_path)
         
         boxes_info_list = compute_yolo_boxes(model,
                                         image,
-                                        target_classes_id = [0],
-                                        target_classes_names = ['extinguisher'],
+                                        target_classes_id = self._target_classes_id,
+                                        target_classes_names = self._target_classes_names,
                                         )
         
         for box_info in boxes_info_list:
@@ -762,13 +790,62 @@ class TemplateAdvancedMatcher():
                   range_fx: np.ndarray = np.arange(0.6, 1.41, 0.1),
                   range_fy: np.ndarray = np.arange(0.6, 1.41, 0.1),
                   range_theta: np.ndarray = np.arange(-10, 11, 5),
+                  depth_image: np.ndarray = None,
                   custom_matching_method: Callable = None,
                   custom_case: Case = None,
                   show_progress: bool = False,
     ):
-        #TODO: doc
         """"
+        Match the base template on the image using pre-treatment to reduce the range of the search.
+        This methods first gets the interesting rectangles of the image (i.e. object parts or template parts) and then match
+        the given template in several sizes and rotation inside these boxes to get the best match.
+        Ti then returns the final image, the list of best matches of each smaller parts, the similarity maps and the similarity stats.
         
+        Parameters
+        ----------
+        image: np.ndarray
+            The image to match with the template.
+        base_template: np.ndarray
+            The template to match with the image.
+        matching_mode: MatchingMode
+            The matching mode of the template matching.
+        range_fx: np.ndarray
+            The range of the scaling factor fx.
+        range_fy: np.ndarray
+            The range of the scaling factor fy.
+        range_theta: np.ndarray
+            The range of the rotation angle theta.
+        depth_image: np.ndarray, optional
+            The depth image to match with the template. If provided, the depth of each match will be printed and returned.
+            Default is None.
+        custom_matching_method: Callable, optional
+            A custom method to compute the similarity map. If not None, the openCV method will not be used.
+            This method should be of the form: custom_matching_method(image: np.ndarray, template: np.ndarray) -> np.ndarray
+        custom_case: Case, optional
+            The case to compute the similarity map. This is only used if a custom method is provided.
+            It corresponds to the trustful value of the similarity map (Case.MIN/Case.MAX).
+        show_progress: bool, optional
+            If True, the progress of the computation will be shown. Default is False.
+        
+        Returns
+        -------
+        final_image: np.ndarray
+            The final image showing the detected elements regarding to the matches
+        found_matches: list[tuple[int]]
+            The list of found matches found in the image in the format (x, y, w, h).
+        similarity_maps: list[np.ndarray]
+            The list of similarity maps for each cropped image.
+        similarity_stats: list[list[float]]
+            The list of similarity statistics for each similarity map.
+            
+        Raises
+        ------
+        ValueError
+            If the image is not valid
+            If the template is not valid
+            If the image and the template do not have the same type
+            If the matching mode is not valid
+            If the custom method is provided but not the custom case
         """
         
         mode = self.mode
@@ -779,6 +856,18 @@ class TemplateAdvancedMatcher():
         image_type = ImageType.getImageType(image)
         if image_type is None:
             raise ValueError("The image is not valid. Please provide a valid image.")
+        
+        if depth_image is not None:
+            depth_image_type = ImageType.getImageType(depth_image)
+            
+            if depth_image_type is None:
+                raise ValueError("The depth image is not valid. Please provide a valid depth image.")
+            
+            height, width = image.shape[:2]
+            depth_height, depth_width = depth_image.shape[:2]
+            if height != depth_height or width != depth_width:
+                raise ValueError("The depth image and the image should have the same dimensions.")
+        
         
         template_type = ImageType.getImageType(base_template)
         if template_type is None:    
@@ -843,7 +932,6 @@ class TemplateAdvancedMatcher():
         self._similarity_stats = []
         best_matches = []
         
-        #TODO: temporary
         for i in range(len(cropped_images)):
             cropped_img = cropped_images[i]
             
@@ -884,9 +972,15 @@ class TemplateAdvancedMatcher():
             self._similarity_stats.append(similarity_stats)
             best_matches.append(TemplateAdvancedMatcher._extractBestMatch(template_size_table, similarity_stats, similarity_case))
         
+       
         #* Score the best matches and get the final image
         #TODO: temp
         print("Matches found on ", len(best_matches), " images.")
+        
+        # list of valid matches, where a valid match is (match_box, score) in the image coordinates
+        valid_matches = []
+        
+        #TODO: sort the matches by their score (do not forget to keep the order of relevant_boxes coherent)
         
         final_image = image.copy()
         for i in range(len(matching_crop_index)):
@@ -896,17 +990,126 @@ class TemplateAdvancedMatcher():
             x, y, w, h = box
             best_match_box, score = best_match
             x_best, y_best, w_best, h_best = best_match_box
+            
+            center_box_width = x + x_best + w_best // 2
+            center_box_height = y + y_best + h_best // 2
+            
+            
+            
+            
+            final_box = (x + x_best, y + y_best, w_best, h_best)
+            
+            # Verify that the box is not too close to another box
+            limit_ratio = TemplateAdvancedMatcher.BOX_LIMIT_RATIO # the ratio of the box size to consider as a limit (0 to 1/2)
+            
+            if limit_ratio != 0.5:
+                points_to_check = [
+                    (x + x_best + limit_ratio * w_best, y + y_best),
+                    (x + x_best + (1 - limit_ratio) * w_best, y + y_best),
+                    (x + x_best, y + y_best + limit_ratio * h_best),
+                    (x + x_best, y + y_best + (1 - limit_ratio) * h_best),
+                ]
+            else:
+                points_to_check = [(center_box_width, center_box_height)]
+            
+            valid_box = True
+            
+            for match in valid_matches:
+                valid_box, _ = match
+                print(valid_box)
+                
+                for p in points_to_check:
+                    if isPointInBox(p, valid_box):
+                        # Skip this box
+                        valid_box = False
+                        break
+                
+                if not valid_box:
+                    break
+            
+            if not valid_box:
+                continue
+            
+            
+            
+            #* Box is valid
+            valid_matches.append((final_box, score))
+            
+            
+            #* Get depth and try to detect if the object is a true match
+            
+            depth_value = None
+            
+            if depth_image is not None:
+                depth_value = int(depth_image[center_box_height, center_box_width])
+                
+                depth_value_right = int(depth_image[center_box_height, center_box_width + (w_best // 2 - 1)])
+                depth_value_left = int(depth_image[center_box_height, center_box_width - (w_best // 2 - 1)])
+                depth_value_top = int(depth_image[center_box_height - (h_best // 2 - 1), center_box_width])
+                depth_value_bottom = int(depth_image[center_box_height + (h_best // 2 - 1), center_box_width])
+                
+                out_coeff = 1
+                
+                depth_value_out_right = int(depth_image[center_box_height, center_box_width + int(w_best * out_coeff)])
+                depth_value_out_left = int(depth_image[center_box_height, center_box_width - int(w_best * out_coeff)])
+                depth_value_out_top = int(depth_image[center_box_height - int(h_best * out_coeff), center_box_width])
+                depth_value_out_bottom = int(depth_image[center_box_height + int(h_best * out_coeff), center_box_width])
+                
+                print("Depth value: ", depth_value)
+                print("Depth values in the order right, left, top, bottom: ")
+                print(depth_value_right, depth_value_left, depth_value_top, depth_value_bottom)
+                print("Depth values out of the box in the order right, left, top, bottom: ")
+                print(depth_value_out_right, depth_value_out_left, depth_value_out_top, depth_value_out_bottom)
+                print("Depth values differences with the center (same order):")
+                print(depth_value_right - depth_value, depth_value_left - depth_value, depth_value_top - depth_value, depth_value_bottom - depth_value)
+                print("Depth values differences with the center (out of the box) (same order):")
+                print(depth_value_out_right - depth_value, depth_value_out_left - depth_value, depth_value_out_top - depth_value, depth_value_out_bottom - depth_value)
+                
+                #? temporary validation test at least for IA
+                # Detect difference between outside the box and inside the box.
+                # If difference more than 2 on a side, extinguisher looks true.
+                valid_extinguisher = False
+                
+                threshold = 1
+                count = sum(
+                    [
+                        # abs(depth_value_right - depth_value) > threshold,
+                        # abs(depth_value_left - depth_value) > threshold,
+                        # abs(depth_value_top - depth_value) > threshold,
+                        # abs(depth_value_bottom - depth_value) > threshold,
+                        abs(depth_value_right - depth_value_out_right) > threshold,
+                        abs(depth_value_left - depth_value_out_left) > threshold,
+                        abs(depth_value_top - depth_value_out_top) > threshold,
+                        abs(depth_value_bottom - depth_value_out_bottom) > threshold,
+                    ]
+                )
+                
+                valid_extinguisher = (count >= 2)
+                print("Valid extinguisher: ", valid_extinguisher, " (count = ", count, ")")
+                
+                
+                # #TODO: temporary
+                # # Visualize
+                # temp_im = normalize(depth_image.copy()).astype(np.float32)
+                # temp_im = cv.cvtColor(temp_im, cv.COLOR_GRAY2BGR)
+                # cv.circle(temp_im, (center_box_width, center_box_height), 3, (255, 0, 0), -1)
+                # cv.imshow("Depth", temp_im)
+            
+            final_point_1 = (x + x_best, y + y_best)
+            final_point_2 = (x + x_best + w_best, y + y_best + h_best)
+            
             cv.rectangle(final_image,
-                         (x + x_best, y + y_best),
-                         (x + x_best + w_best, y + y_best + h_best),
+                         final_point_1,
+                         final_point_2,
                          TemplateAdvancedMatcher.RECTANGLE_COLOR,
                          TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
             #TODO: Temporary
             cv.rectangle(final_image, (x, y), (x + w, y + h), (0, 0, 255), TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
+            # waitNextKey(0)
         
         self.final_image = final_image
         
-        return final_image#, best_matches, self._similarity_stats, self._similarity_maps
+        return final_image, valid_matches, self._similarity_stats, self._similarity_maps
 
 
 

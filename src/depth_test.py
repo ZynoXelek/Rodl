@@ -68,10 +68,14 @@ def main_kmeans():
     # Get all images
     initial_folder_path = "dataset/raw/test/"
     color_folder_path = os.path.join(initial_folder_path, "camera_color_image_raw/")
-    
+    depth_folder_path = os.path.join(initial_folder_path, "camera_depth_image_raw/")
     
     image_path = os.path.join(color_folder_path, "*.png")
     file_paths = glob(image_path)
+    depth_image_path = os.path.join(depth_folder_path, "*.png")
+    depth_file_paths = glob(depth_image_path)
+    
+    depth_foreach, depth_foreach_strict = match_color_depth_img(color_folder_path, depth_folder_path)
     
     # color movie
     # color_movie = [cv.imread(file) for file in file_paths]              #* Use BGR images
@@ -109,29 +113,38 @@ def main_kmeans():
     
     
     # for im in color_movie[30:40]:
-    for im in color_movie:
+    for i in range(len(color_movie)):
+        im = color_movie[i]
+        
+        depth_im = None
+        if depth_foreach_strict[i] is not None:
+            depth_im = cv.imread(depth_file_paths[depth_foreach_strict[i]], cv.IMREAD_GRAYSCALE)
+            cv.imshow("Depth image", normalize(depth_im))
+        print(" --------------------------------------------------------------- ")
+        print("image: ", i, " - depth_image found? ", depth_im is not None)
         
         t = time.time()
-        final_im = matcher.fullMatch(im,
-                                     base_template,
-                                     matching_mode=matching_mode,
-                                     range_fx=range_fx,
-                                     range_fy=range_fy,
-                                     range_theta=range_theta,
-                                    #  custom_matching_method=custom_matching_method,
-                                    #  custom_case=custom_case,
-                                     show_progress = True)
+        final_im, valid_matches, similarity_maps, similarity_stats =\
+            matcher.fullMatch(im,
+                              base_template,
+                              matching_mode=matching_mode,
+                              range_fx=range_fx,
+                              range_fy=range_fy,
+                              range_theta=range_theta,
+                              depth_image=depth_im,
+                              # custom_matching_method=custom_matching_method,
+                              # custom_case=custom_case,
+                              show_progress = True)
         print("Time elapsed to compute the final image: ", time.time() - t)
         
-        
+        print("Finally, valid matches: ", valid_matches)
         
         #TODO:
         #
         # Add new results to the list of matches
         # - If a depth map is associated to this image:
-        #           Use it to compute the distance to the camera, and therefore the position with the
+        #           Use it to compute the distance to the camera, and therefore the position with the Projection matrix written in the camera calibration file
         #           To do so, take the green box and compute the distance to the center of the box
-        # projection matrix written in the camera calibration file
         # - Else if not, either:
         #           ignore this image for depth computation (+)
         #           use the previous depth map to do the same computation
@@ -152,7 +165,7 @@ def main_kmeans():
         cv.imshow("Color movie", im)
         # cv.imshow("Object image", objects_im)
         cv.imshow("Final image", final_im)
-        waitNextKey(1)
+        waitNextKey(0)
     
     print("Treatment finished!")
     waitNextKey(0)

@@ -118,6 +118,29 @@ def getBlackColor(image_type: ImageType) -> tuple:
 
 
 
+def isPointInBox(point: tuple[int], box: tuple[int]) -> bool:
+    """
+    Check if a point is in a box defined by the top left point and its dimensions width, height.
+    
+    Parameters
+    ----------
+    point: tuple[int]
+        point to check
+    box: tuple[int]
+        box defined by the top left point and its dimensions width, height
+    
+    Returns
+    -------
+    is_in_box: bool
+        True if the point is in the box, False otherwise
+    """
+    x, y = point
+    x1, y1, w, h = box
+    return x1 <= x <= x1 + w and y1 <= y <= y1 + h
+
+
+
+
 def rotateImage(image: np.ndarray, angle: float) -> np.ndarray:
     """
     Rotate an image by the given angle (in degrees).
