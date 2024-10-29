@@ -26,7 +26,6 @@ def main():
                                         img,
                                         target_classes_id = [0],
                                         target_classes_names = ['extinguisher'],
-                                        show_result = True,
                                         )
         n_boxes = len(boxes_info_list)
         print(f'image {i+1}/{n_img}, {n_boxes} boxes:')
