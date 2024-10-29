@@ -50,18 +50,45 @@ class ImageType(Enum):
 
 def waitNextKey(delay: int = 0) -> None:
     """
-    Waits for next opencv key for the given delay.
+    Waits for next OpenCV key for the given delay.
     Quits if Esc or Q is pressed.
+    Returns the key pressed.
     
     Parameters
     ----------
     delay: int
         delay in milliseconds (default: 0)
+    
+    Returns
+    -------
+    key: int
+        the integer representation of the key pressed
     """
     k = cv.waitKey(delay)
     if k == 27 or k == ord('q'):
         cv.destroyAllWindows()
         exit(0)
+    return k
+
+
+
+def loadMatrixFromText(text: str, shape: tuple = None) -> np.ndarray:
+    """Load a matrix from a text.
+    
+    Args:
+        test(str): text to load the matrix from
+        shape (tuple, optional): shape of the matrix. Defaults to `None` which means it is not modified.
+    
+    Returns:
+        np.ndarray: loaded matrix
+    """
+    
+    formatted_str = text.strip().replace("[", "").replace("]", "").replace(",", " ").split("\n")
+    matrix = np.array([list(map(float, line.split())) for line in formatted_str])
+    
+    if shape is not None:
+        matrix = matrix.reshape(shape)
+    return matrix
 
 
 
@@ -803,10 +830,35 @@ def cropOnNan(im: np.ndarray) -> np.ndarray:
 
 
 def kmeans(im: np.ndarray,
-           criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
-           nClusters = 7,
-           attempts = 30,
-           flags = cv.KMEANS_PP_CENTERS) -> np.ndarray:
+           criteria: tuple = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
+           nClusters: int = 7,
+           attempts: int = 30,
+           flags: int = cv.KMEANS_PP_CENTERS,
+           colors: np.ndarray = None) -> np.ndarray:
+    """
+    Compute the KMeans clustering on an image.
+    
+    Parameters
+    ----------
+    im: np.ndarray
+        image to segment
+    criteria: tuple, optional
+        criteria for the KMeans algorithm. Defaults to (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    nClusters: int, optional
+        number of clusters to compute. Defaults to 7
+    attempts: int, optional
+        number of attempts for the KMeans algorithm. Defaults to 30
+    flags: int, optional
+        flags for the KMeans algorithm. Defaults to cv.KMEANS_PP_CENTERS
+    colors: np.ndarray, optional
+        colors to use for the clusters. If None, random colors are generated. Defaults to None
+        Should be of dimensions (nClusters, 3) and dtype np.uint8
+    
+    Returns
+    -------
+    segmented_image: np.ndarray
+        segmented image
+    """
     
     shape = im.shape
     
@@ -829,7 +881,9 @@ def kmeans(im: np.ndarray,
     _, labels, centers = cv.kmeans(flatten_im, nClusters, None, criteria, attempts, flags)
     
     # Display the results
-    COLORS = np.random.randint(0, 255, size=(nClusters, 3), dtype=np.uint8)
+    COLORS = colors
+    if COLORS is None or len(COLORS) < nClusters:
+        COLORS = np.random.randint(0, 255, size=(nClusters, 3), dtype=np.uint8)
     
     centers = np.uint8(centers)
     
