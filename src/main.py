@@ -54,7 +54,7 @@ def main():
     
     
     #? Base Template: Size reduced and process the alpha channel (can be modified) -------------------
-    base_template = cv.imread("res/extinguisher-tube-template.png", cv.IMREAD_UNCHANGED)   #"res/extinguisher-tube-template.png""
+    base_template = cv.imread("res/extinguisher-body-template.png", cv.IMREAD_UNCHANGED)
     base_template = crop(base_template)
     base_template = setTransparentPixelsTo(base_template,
                                         #    color=(255, 255, 255, 0),
