@@ -4,9 +4,32 @@ from ultralytics import YOLO
 import os
 from tool_functions import *
 
-#TODO know if we keep this function
+def findTimeInFile(info_folder: str,
+                   info_file_name: str,
+                   secs_keyword: str = 'secs',
+                   nsecs_keyword: str = 'nsecs',) -> float:
+    txt_file_name = os.path.join(info_folder, info_file_name)
+    with open(txt_file_name, 'r') as txt_file:
+        lines = txt_file.readlines()  # Lire toutes les lignes dans une liste
+        secs_found = False
+        nsecs_found = False
+        for line in lines:
+            clean_line = line.strip()
+            if secs_found and nsecs_found:
+                break
+            if not secs_found and clean_line[:len(secs_keyword)] == secs_keyword:
+                secs = int(clean_line[(len(secs_keyword) + 1):])
+                secs_found = True
+            if not nsecs_found and clean_line[:len(nsecs_keyword)] == nsecs_keyword:
+                nsecs = int(clean_line[(len(nsecs_keyword) + 1):])
+                nsecs_found = True
+        secs_tot = secs + nsecs*10**(-9)
+        return secs_tot
+
 def match_color_depth_img(color_folder: str,
                           depth_folder: str,
+                          color_info_folder: str,
+                          depth_info_folder: str,
                           show_result = False) -> list[int]:
     """
     Matches the color images with the depth images regarding to the date of the photo.
@@ -29,35 +52,39 @@ def match_color_depth_img(color_folder: str,
     """
     image_folder = color_folder
     depth_image_folder = depth_folder
+    image_info_folder = color_info_folder
+    depth_image_info_folder = depth_info_folder
 
     img_path_list = os.listdir(image_folder)
     depth_img_path_list = os.listdir(depth_image_folder)
+    img_info_path_list = os.listdir(image_info_folder)
+    depth_img_info_path_list = os.listdir(depth_image_info_folder)
 
     depth_foreach_color = []
     depth_foreach_color_strict = [None] * len(img_path_list)
 
     min_j = -1
     for i, depth_img_path in enumerate(depth_img_path_list):
-        depth_img_num = int(depth_img_path.replace('.png', '').split('_')[-1])
+        depth_img_time = findTimeInFile(depth_image_info_folder, depth_img_info_path_list[i])
         min_diff = np.inf
         for j, img_path in enumerate(img_path_list):
-            img_num = int(img_path.replace('.png', '').split('_')[-1])
-            diff = np.abs(img_num - depth_img_num)
-            if diff < min_diff:
+            img_time = findTimeInFile(image_info_folder, img_info_path_list[j])
+            diff = np.abs(img_time - depth_img_time)
+            if diff <= min_diff:
                 min_j = j
                 min_diff = diff
             else:
                 break
         depth_foreach_color_strict[min_j] = i
-
+        # print("Depth for each strict min diff at i=", i, " is ", min_diff)
     min_j = -1
     for i, img_path in enumerate(img_path_list):
-        img_num = int(img_path.replace('.png', '').split('_')[-1])
+        img_time = findTimeInFile(image_info_folder, img_info_path_list[i])
         min_diff = np.inf
         for j, depth_img_path in enumerate(depth_img_path_list):
-            depth_img_num = int(depth_img_path.replace('.png', '').split('_')[-1])
-            diff = np.abs(img_num - depth_img_num)
-            if diff < min_diff:
+            depth_img_time = findTimeInFile(depth_image_info_folder, depth_img_info_path_list[j])
+            diff = np.abs(img_time - depth_img_time)
+            if diff <= min_diff:
                 min_j = j
                 min_diff = diff
             else:
@@ -103,7 +130,7 @@ def compute_yolo_boxes(yolo_model: YOLO,
                    target_classes_id: list[int],
                    target_classes_names: list[str],
                    target_classes_colors: list[tuple] | None = None,
-                   show_result: bool = False) -> list[dict]:
+                   ) -> list[dict]:
     """
     Compute the detected boxes of the targeted classes using YOLO model.
     
@@ -214,8 +241,8 @@ def show_result_yolo_boxes(img: np.ndarray,
         cv.rectangle(im, (x1, y1), (x1 + w_box, y1 + h_box), class_color, RECTANGLE_THICKNESS)
         label = class_name + ': ' + str(round(score, 4))
         (text_width, text_height), baseline = cv.getTextSize(label, FONT, TEXT_SCALE, TEXT_THICKNESS)
-        cv.rectangle(im, (x1, y1 - text_height), (x1 + text_width, y1 + baseline), class_color, cv.FILLED)
-        cv.putText(im, label, (x1, y1), FONT, TEXT_SCALE, TEXT_COLOR, TEXT_THICKNESS)
+        cv.rectangle(im, (x1, y1 - text_height - baseline), (x1 + text_width, y1), class_color, cv.FILLED)
+        cv.putText(im, label, (x1, y1 - baseline), FONT, TEXT_SCALE, TEXT_COLOR, TEXT_THICKNESS)
     cv.imshow('object detection', im)
     waitNextKey()
     

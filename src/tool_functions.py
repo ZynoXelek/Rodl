@@ -50,18 +50,45 @@ class ImageType(Enum):
 
 def waitNextKey(delay: int = 0) -> None:
     """
-    Waits for next opencv key for the given delay.
+    Waits for next OpenCV key for the given delay.
     Quits if Esc or Q is pressed.
+    Returns the key pressed.
     
     Parameters
     ----------
     delay: int
         delay in milliseconds (default: 0)
+    
+    Returns
+    -------
+    key: int
+        the integer representation of the key pressed
     """
     k = cv.waitKey(delay)
     if k == 27 or k == ord('q'):
         cv.destroyAllWindows()
         exit(0)
+    return k
+
+
+
+def loadMatrixFromText(text: str, shape: tuple = None) -> np.ndarray:
+    """Load a matrix from a text.
+    
+    Args:
+        test(str): text to load the matrix from
+        shape (tuple, optional): shape of the matrix. Defaults to `None` which means it is not modified.
+    
+    Returns:
+        np.ndarray: loaded matrix
+    """
+    
+    formatted_str = text.strip().replace("[", "").replace("]", "").replace(",", " ").split("\n")
+    matrix = np.array([list(map(float, line.split())) for line in formatted_str])
+    
+    if shape is not None:
+        matrix = matrix.reshape(shape)
+    return matrix
 
 
 
@@ -114,6 +141,29 @@ def getBlackColor(image_type: ImageType) -> tuple:
             return (0, 0, 0)
         case ImageType.COLOR_WITH_ALPHA:
             return (0, 0, 0, 0)
+
+
+
+
+def isPointInBox(point: tuple[int], box: tuple[int]) -> bool:
+    """
+    Check if a point is in a box defined by the top left point and its dimensions width, height.
+    
+    Parameters
+    ----------
+    point: tuple[int]
+        point to check
+    box: tuple[int]
+        box defined by the top left point and its dimensions width, height
+    
+    Returns
+    -------
+    is_in_box: bool
+        True if the point is in the box, False otherwise
+    """
+    x, y = point
+    x1, y1, w, h = box
+    return x1 <= x <= x1 + w and y1 <= y <= y1 + h
 
 
 
@@ -780,16 +830,41 @@ def cropOnNan(im: np.ndarray) -> np.ndarray:
 
 
 def kmeans(im: np.ndarray,
-           criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
-           nClusters = 7,
-           attempts = 30,
-           flags = cv.KMEANS_PP_CENTERS) -> np.ndarray:
+           criteria: tuple = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2),
+           nClusters: int = 7,
+           attempts: int = 30,
+           flags: int = cv.KMEANS_PP_CENTERS,
+           colors: np.ndarray = None) -> np.ndarray:
+    """
+    Compute the KMeans clustering on an image.
+    
+    Parameters
+    ----------
+    im: np.ndarray
+        image to segment
+    criteria: tuple, optional
+        criteria for the KMeans algorithm. Defaults to (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    nClusters: int, optional
+        number of clusters to compute. Defaults to 7
+    attempts: int, optional
+        number of attempts for the KMeans algorithm. Defaults to 30
+    flags: int, optional
+        flags for the KMeans algorithm. Defaults to cv.KMEANS_PP_CENTERS
+    colors: np.ndarray, optional
+        colors to use for the clusters. If None, random colors are generated. Defaults to None
+        Should be of dimensions (nClusters, 3) and dtype np.uint8
+    
+    Returns
+    -------
+    segmented_image: np.ndarray
+        segmented image
+    """
     
     shape = im.shape
     
     image_type = ImageType.getImageType(im)
     
-    if image_type is None:
+    if image_type is None and len(shape) != 3:
         raise ValueError("Input image must be a correct image, either gray scale or color image with or without transparency")
     
     nb_channels = 1
@@ -800,13 +875,17 @@ def kmeans(im: np.ndarray,
             nb_channels = 3
         case ImageType.COLOR_WITH_ALPHA:
             nb_channels = 4
+        case _:
+            nb_channels = im.shape[2]
     
     flatten_im = np.float32(im.reshape(-1, nb_channels))
     
     _, labels, centers = cv.kmeans(flatten_im, nClusters, None, criteria, attempts, flags)
     
     # Display the results
-    COLORS = np.random.randint(0, 255, size=(nClusters, 3), dtype=np.uint8)
+    COLORS = colors
+    if COLORS is None or len(COLORS) < nClusters:
+        COLORS = np.random.randint(0, 255, size=(nClusters, 3), dtype=np.uint8)
     
     centers = np.uint8(centers)
     
@@ -827,6 +906,7 @@ def remove_background_kmeans(im: np.ndarray,
                              erosion_size: int = 3,
                              dilation_size: int = 3,
                              box_excluding_size: tuple[int] = (10, 10),
+                             display_steps: bool = False
 ) -> np.ndarray:
     """
     Remove the background of an image.
@@ -857,6 +937,8 @@ def remove_background_kmeans(im: np.ndarray,
     box_excluding_size : tuple[int], optional
         The size of the box to exclude objects that are too small.
         The box is defined by (width, height). Defaults to (10, 10).
+    display_steps : bool, optional
+        If True, the intermediate images will be displayed. Defaults to False.
     
     Returns
     -------
@@ -935,16 +1017,14 @@ def remove_background_kmeans(im: np.ndarray,
     
     EXCLUDING_SIZE = box_excluding_size
     
-    #TODO: Add edge detection to help segmenting the image
+    #TODO: Add edge detection to help image segmentation?
     # canny_edges = cv.Canny(im, 100, 200)
     # cv.imshow("Canny edges", canny_edges)
     
-    seg_im = kmeans(im, nClusters=NB_CLUSTERS, attempts=NB_ATTEMPTS)
-    
-    #TODO: temporary
-    # cv.imshow("After kmeans", seg_im)
-    # seg_canny_edges = cv.Canny(seg_im, 100, 200)
-    # cv.imshow("Segmented Canny edges", seg_canny_edges)
+    colors = np.array([
+        (i, i, i) for i in np.linspace(0, 255, NB_CLUSTERS)
+    ], dtype=np.uint8)
+    seg_im = kmeans(im, nClusters=NB_CLUSTERS, attempts=NB_ATTEMPTS, colors=colors)
     
     # Get all unique colors and their counts
     unique_colors, counts = np.unique(seg_im.reshape(-1, 3), axis=0, return_counts=True)
@@ -963,37 +1043,39 @@ def remove_background_kmeans(im: np.ndarray,
     
     mask_int = (np.isin(seg_im.reshape(-1, 3), object_colors).all(axis=-1).reshape(seg_im.shape[:2])).astype(np.uint8)
     
-    #TODO: temporary
-    cv.imshow("After kmeans: initial object mask", mask_int * 255)
-    
     if exclude_single_pixels:
-        # Remove single object pixels by erosion + dilation    
-        mask_int = cv.dilate(mask_int, np.ones((DILATION_SIZE, DILATION_SIZE), np.uint8), iterations=1)
+        # Remove single object pixels by erosion + dilation
         mask_int = cv.erode(mask_int, np.ones((EROSION_SIZE, EROSION_SIZE), np.uint8), iterations=1)
-        
-    #     #TODO: temporary
-    #     cv.imshow("Post erosion", mask_int * 255)
+        mask_int = cv.dilate(mask_int, np.ones((DILATION_SIZE, DILATION_SIZE), np.uint8), iterations=1)
         
     # Then detect objects' contours
     contours, hierarchy = cv.findContours(mask_int * 255, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     relevant_contours = []
     
-    
-    #TODO: temporary
-    contour_im = np.zeros(im.shape[:2], dtype=np.uint8)
     for contour in contours:
         x, y, w, h = cv.boundingRect(contour)
         
         if w >= EXCLUDING_SIZE[0] and h >= EXCLUDING_SIZE[1]:
             relevant_contours.append(contour)
-            cv.drawContours(contour_im, [contour], -1, 255, 1)
     
-    #TODO: temporary
-    cv.imshow("Post contour", contour_im)
     
     mask = mask_int.astype(bool)
     
     final_im[mask] = im[mask]
+    
+    #? Visualization
+    if display_steps:
+        contour_im = np.zeros(im.shape[:2], dtype=np.uint8)
+        boxes_im = im.copy()
+        for relevant_contour in relevant_contours:
+            x, y, w, h = cv.boundingRect(relevant_contour)
+            cv.drawContours(contour_im, [relevant_contour], -1, 255, 1)
+            cv.rectangle(boxes_im, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        cv.imshow("Segmented image", seg_im)
+        cv.imshow("Contour image", contour_im)
+        cv.imshow("Boxes image", boxes_im)
+    
     
     return final_im, relevant_contours
 
@@ -1002,7 +1084,7 @@ def remove_background_kmeans(im: np.ndarray,
 
 
 
-#* Superpixels
+#* Superpixels ----> Is not used in the end because did not work well for the task
 
 
 def slic(im: np.ndarray,
@@ -1077,8 +1159,7 @@ def remove_background_superpixels(im: np.ndarray,
 ) -> np.ndarray:
     
     mask_slic, labels, num_labels = slic(im)
-    
-    #TODO: temporary
+
     contour_color = (0, 255, 0)
     superpixel_im = im.copy()
     superpixel_im[mask_slic != 0] = contour_color
@@ -1129,7 +1210,7 @@ def remove_background_superpixels(im: np.ndarray,
 
 
 
-# TODO: Remove?
+#* Custom similarity map computation. However, is way slower than the implemented OpenCV methods.
 def custom_similarity(image: np.ndarray,
                       template: np.ndarray,
                       weight_euclidean: float = 1.0,
@@ -1137,7 +1218,6 @@ def custom_similarity(image: np.ndarray,
                       normalized: bool = True,
                       display_advancement: bool = False,
                       show: bool = False,
-                      show_threshold: float = 1.01
 ) -> np.ndarray:
     """Compute the custom squared difference map between the two images.
     It uses the transparency difference of the template and each cropped image.
@@ -1154,8 +1234,6 @@ def custom_similarity(image: np.ndarray,
         normalized (bool, optional): whether to normalize the squared difference map. Defaults to True.
         display_advancement (bool, optional): whether to show the progress. Defaults to True.
         show (bool, optional): whether to show the difference map. Defaults to False.
-        show_threshold (float, optional): relative threshold divided by the minimum value found
-                                          under which the corresponding value is shown. Defaults to 1.2.
 
     Returns:
         np.ndarray: squared difference map
@@ -1311,7 +1389,8 @@ def custom_similarity(image: np.ndarray,
     return result
 
 
-# TODO: Remove?
+
+#* Custom single similarity value computation. However, is way slower than the implemented OpenCV methods.
 def custom_matching(im: np.ndarray, template: np.ndarray) -> np.ndarray:
     """
     Compute the squared difference map between the two images.

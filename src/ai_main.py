@@ -4,7 +4,7 @@ import cv2 as cv
 from ai_tool_functions import *
 
 def main():
-    model_folder = 'res/train_models/training_model1/'
+    model_folder = 'res/train_models/training_model2/'
     model_file = "weights/best.pt"
     
     model_path = model_folder + model_file
@@ -26,7 +26,6 @@ def main():
                                         img,
                                         target_classes_id = [0],
                                         target_classes_names = ['extinguisher'],
-                                        show_result = True,
                                         )
         n_boxes = len(boxes_info_list)
         print(f'image {i+1}/{n_img}, {n_boxes} boxes:')
