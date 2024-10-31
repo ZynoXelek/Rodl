@@ -4,7 +4,7 @@ import cv2 as cv
 from ai_tool_functions import *
 
 def main():
-    model_folder = 'res/train_models/training_model1/'
+    model_folder = 'res/train_models/training_model2/'
     model_file = "weights/best.pt"
     
     model_path = model_folder + model_file

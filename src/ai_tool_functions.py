@@ -26,7 +26,6 @@ def findTimeInFile(info_folder: str,
         secs_tot = secs + nsecs*10**(-9)
         return secs_tot
 
-#TODO know if we keep this function
 def match_color_depth_img(color_folder: str,
                           depth_folder: str,
                           color_info_folder: str,
@@ -71,14 +70,13 @@ def match_color_depth_img(color_folder: str,
         for j, img_path in enumerate(img_path_list):
             img_time = findTimeInFile(image_info_folder, img_info_path_list[j])
             diff = np.abs(img_time - depth_img_time)
-            if diff < min_diff:
+            if diff <= min_diff:
                 min_j = j
                 min_diff = diff
             else:
                 break
-        #TODO: Add a threshold on max_diff acceptable?
         depth_foreach_color_strict[min_j] = i
-        print("Depth for each strict min diff at i=", i, " is ", min_diff)
+        # print("Depth for each strict min diff at i=", i, " is ", min_diff)
     min_j = -1
     for i, img_path in enumerate(img_path_list):
         img_time = findTimeInFile(image_info_folder, img_info_path_list[i])
@@ -86,7 +84,7 @@ def match_color_depth_img(color_folder: str,
         for j, depth_img_path in enumerate(depth_img_path_list):
             depth_img_time = findTimeInFile(depth_image_info_folder, depth_img_info_path_list[j])
             diff = np.abs(img_time - depth_img_time)
-            if diff < min_diff:
+            if diff <= min_diff:
                 min_j = j
                 min_diff = diff
             else:

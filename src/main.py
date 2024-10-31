@@ -29,6 +29,8 @@ def readProjectionMatrixInInfoFile(info_file_path: str) -> np.ndarray:
 
 def main():
     # Get all images
+    
+    #? File paths (can be modified) ----------------------------------------------------------------
     initial_folder_path = "dataset/raw/test/"
     color_folder_path = os.path.join(initial_folder_path, "camera_color_image_raw/")
     depth_folder_path = os.path.join(initial_folder_path, "camera_depth_image_raw/")
@@ -41,70 +43,110 @@ def main():
     depth_info_path = os.path.join(depth_info_folder_path, "*.txt")
     depth_file_paths = glob(depth_image_path)
     depth_info_file_paths = glob(depth_info_path)
+    #? -----------------------------------------------------------------------------------------------
     
     depth_foreach, depth_foreach_strict = match_color_depth_img(color_folder_path, depth_folder_path, color_info_folder_path, depth_info_folder_path)
     
     
     # color movie
-    # color_movie = [cv.imread(file) for file in file_paths]              #* Use BGR images
-    color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)    #* Use BGRA images
+    color_movie = [cv.cvtColor(cv.imread(file), cv.COLOR_BGR2BGRA)    #* Use BGRA images since the template is also RGBA
                    for file in file_paths]
     
     
-    # Base Template
+    #? Base Template: Size reduced and process the alpha channel (can be modified) -------------------
     base_template = cv.imread("res/extinguisher-tube-template.png", cv.IMREAD_UNCHANGED)   #"res/extinguisher-tube-template.png""
     base_template = crop(base_template)
     base_template = setTransparentPixelsTo(base_template,
                                         #    color=(255, 255, 255, 0),
                                            )
     factor = 1/7
-    
     base_template = cv.resize(base_template, None, None, fx=factor, fy=factor)
-    
-    # base_template = cv.cvtColor(base_template, cv.COLOR_BGRA2BGR)       #* Use BGR template
+    #? -----------------------------------------------------------------------------------------------
     
     cv.imshow("Base template", base_template)
     waitNextKey(0)
     
     
-    # create advance matcher
-    matcher_mode = TemplateAdvancedMatcher.AI_MODE  # TemplateAdvancedMatcher.AI_MODE or TemplateAdvancedMatcher.CLASSIC_MODE
+    # Create advance matcher
+    matcher_mode = TemplateAdvancedMatcher.CLASSIC_MODE  # TemplateAdvancedMatcher.AI_MODE or TemplateAdvancedMatcher.CLASSIC_MODE
     reliability_mode = TemplateAdvancedMatcher.RELIABILITY_BACKGROUND_MODE # TemplateAdvancedMatcher.RELIABILITY_BACKGROUND_MODE or TemplateAdvancedMatcher.RELIABILITY_DEPTH_MODE
     matcher = TemplateAdvancedMatcher(matcher_mode, reliability_mode)
     
+    
+    #? Matching parameters (can be modified) --------------------------------
     matching_mode = MatchingMode.SQDIFF
     range_fx = np.arange(0.2, 1.21, 0.2)
     range_fy = np.arange(0.4, 1.51, 0.2)
     range_theta = np.arange(-10, 11, 10)
     
-    # custom_matching_method = custom_matching        # or None
-    # custom_case = Case.MIN                          # or Case.MAX
+    custom_matching_method = None               # None, or custom_matching if you want to use a custom matching method
+    custom_case = None                          # None or the corresponding Case.MIN, Case.MAX if you are using a custom matching method
+    #? ----------------------------------------------------------------------
     
-    base_waiting_time = 1
-    waiting_time = base_waiting_time
     
-    # for im in color_movie[30:40]:
+    #? Pre-treatment parameters (can be modified) --------------------------------
+    
+    #* In case of an AI mode
+    if matcher_mode == TemplateAdvancedMatcher.AI_MODE:
+        # None values means it will use the default values
+        matcher.setAIModeVariables(model_path="res/train_models/training_model2/weights/best.pt",
+                                target_classes_id=None,
+                                target_classes_names=None,)
+    #* In case of a classic mode
+    elif matcher_mode == TemplateAdvancedMatcher.CLASSIC_MODE:
+        # None values means it will use the default values
+        matcher.setClassicModeVariables(nb_attempts=None,
+                                        nb_clusters=None,
+                                        nb_background_colors=None,
+                                        exclude_single_pixels=None,
+                                        erosion_size=None,
+                                        dilation_size=None,
+                                        box_excluding_size=None,
+                                        classic_display=False,)
+    #? ----------------------------------------------------------------------
+    
+    
+    #? Scoring parameters (can be modified) --------------------------------
+    
+    #* In case of a background scoring mode
+    if reliability_mode == TemplateAdvancedMatcher.RELIABILITY_BACKGROUND_MODE:
+        # None values means it will use the default values
+        matcher.setScoringBackgroundVariables(template_size_factor=None,
+                                              reliability_high_threshold=None,
+                                              reliability_low_threshold=None,)
+    #* In case of a depth scoring mode
+    elif reliability_mode == TemplateAdvancedMatcher.RELIABILITY_DEPTH_MODE:
+        # None values means it will use the default values
+        matcher.setScoringDepthVariables(outbox_factor=None,
+                                         difference_threshold=None,
+                                         reliability_threshold=None,
+                                         display_reliability_points=False,)
+    #? ----------------------------------------------------------------------
+    
+    
+    #* Start the treatment
+    base_waiting_time = 1   # Continuous mode
+    waiting_time = 0        # Starts on image per image mode
+    
     for i in range(len(color_movie)):
         im = color_movie[i]
         
         depth_im = None
         projection_matrix = None
         
-        #* Strict depth matching version
-        if i+1 < len(depth_foreach_strict) and depth_foreach_strict[i+1] is not None:
-            depth_index = depth_foreach_strict[i+1]
-            depth_im = cv.imread(depth_file_paths[depth_index], cv.IMREAD_GRAYSCALE)
-            projection_matrix = readProjectionMatrixInInfoFile(depth_info_file_paths[depth_index])
-            # cv.imshow("Depth image", normalize(depth_im))
-        
-        
-        # #* Normal depth matching version (will always map a depth image to a color image)
-        # if i+1 < len(depth_foreach) and depth_foreach[i+1] is not None:
-        #     depth_index = depth_foreach[i+1]
+        #? Depth image to color image matching (can be modified) -------------------------------
+        # #* Strict depth matching version
+        # if i+1 < len(depth_foreach_strict) and depth_foreach_strict[i+1] is not None:
+        #     depth_index = depth_foreach_strict[i+1]
         #     depth_im = cv.imread(depth_file_paths[depth_index], cv.IMREAD_GRAYSCALE)
         #     projection_matrix = readProjectionMatrixInInfoFile(depth_info_file_paths[depth_index])
-        #     # cv.imshow("Depth image", normalize(depth_im))
         
+        #* Normal depth matching version (will always map a depth image to a color image)
+        if i+1 < len(depth_foreach) and depth_foreach[i+1] is not None:
+            depth_index = depth_foreach[i+1]
+            depth_im = cv.imread(depth_file_paths[depth_index], cv.IMREAD_GRAYSCALE)
+            projection_matrix = readProjectionMatrixInInfoFile(depth_info_file_paths[depth_index])
+        #? -------------------------------------------------------------------------------------
         
         print(" --------------------------------------------------------------- ")
         print("image: ", i, " - depth_image found? ", depth_im is not None)
@@ -120,40 +162,19 @@ def main():
                               range_theta=range_theta,
                               depth_image=depth_im,
                               projection_matrix=projection_matrix,
-                              # custom_matching_method=custom_matching_method,
-                              # custom_case=custom_case,
-                              show_progress = True)
+                              display_depth_matching=True,
+                              custom_matching_method=custom_matching_method,
+                              custom_case=custom_case,
+                              show_progress = True,)
         print("Time elapsed to compute the final image: ", time.time() - t)
         
-        #TODO:
-        #
-        # Add new results to the list of matches
-        # - If a depth map is associated to this image:
-        #           Use it to compute the distance to the camera, and therefore the position with the Projection matrix written in the camera calibration file
-        #           To do so, take the green box and compute the distance to the center of the box
-        # - Else if not, either:
-        #           ignore this image for depth computation (+)
-        #           use the previous depth map to do the same computation
-        #           try to match to the previous detected objects and use the same position
-        #
-        #
-        # Apply a score to the matches
-        # - If the score is too low, ignore the match (classic case, use similarity not normalized?)
-        # We can then normalize each similarity map if we want to.
-        # - If the score is high enough, it is a potential extinguisher
-        # - Among potential extinguishers, try to compute delta distance to the sides to detect fake extinguishers?
-        #
-        
-        
-        cv.imshow("Color movie", im)
-        # cv.imshow("Object image", objects_im)
+        cv.imshow("Original image", im)
         cv.imshow("Final image", final_im)
         k = waitNextKey(waiting_time)
         
         # Switch between 0 and the base waiting time if space is pressed
         if k == 32:
             waiting_time = base_waiting_time if waiting_time == 0 else 0
-        # cv.destroyAllWindows()
     
     print("Treatment finished!")
     waitNextKey(0)

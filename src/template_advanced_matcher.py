@@ -10,9 +10,9 @@ from ultralytics import YOLO
 from tool_functions import *
 from ai_tool_functions import *
 
-#TODO: remove these lists in the end, once the thresholds have been determined
-DEPTH_TESTING_LIST = []
-BACKGROUND_TESTING_LIST = []
+# #?: these lists are useful to try to tune reliability thresholds
+# DEPTH_TESTING_LIST = []
+# BACKGROUND_TESTING_LIST = []
 
 class Case(Enum):
     """
@@ -37,27 +37,42 @@ class MatchingMode(Enum):
 
 
 class TemplateAdvancedMatcher():
-    #TODO: Update
     """
     Class that handles the advanced template matching.
+    This matcher uses a pre-process method on each image to determine the areas of interest to look for objects.
+    It can either use the classic method or the deep learning method to do so.
+    Then, it tries to match the given template on each of these areas of interest.
+    Finally, it scores the result to determine the reliability of the detected objects and it tries to detect fake ones.
+    To do so, it can either use the depth information or the background information.
+    
+    Additionally, it computes the approximate position of each detected object in the image if provided a depth image.
+    
+    A lot of parameters uses the default values specified as class attributes. Though, most of them can be modified using the corresponding setter methods,
+    for each of the defined modes.
     
     Attributes
     ----------
+    mode: int
+        The mode of the template matching. It can either be CLASSIC_MODE or AI_MODE.
+    reliability_mode: int
+        The mode of the reliability scoring. It can either be RELIABILITY_DEPTH_MODE or RELIABILITY_BACKGROUND_MODE.
     final_image: np.ndarray
-        final image showing the detected elements regarding to the matches
+        The final image with the detected objects.
     """
     
     #* Constants
     
-    RECTANGLE_COLOR = (0, 255, 0)
+    RECTANGLE_COLOR = (150, 255, 150)
     RECTANGLE_THICKNESS = 1
     
     BOX_LIMIT_RATIO = 0.5
     
     TEXT_COLOR = (255, 255, 255)
     FONT = cv.FONT_HERSHEY_SIMPLEX
-    TEXT_SCALE = 0.6
+    TEXT_SCALE = 0.4
     TEXT_THICKNESS = 1
+    
+    DISPLAY_DEPTH_MATCHING_STEPS = False # Whether the steps of the depth matching should be displayed or not.
     
     # --- Modes ---
     
@@ -75,11 +90,14 @@ class TemplateAdvancedMatcher():
     CLASSIC_DEFAULT_EROSION_SIZE = 3 # Size of the erosion kernel for the background removal
     CLASSIC_DEFAULT_DILATION_SIZE = 3 # Size of the dilation kernel for the background removal
     CLASSIC_DEFAULT_BOX_EXCLUDING_SIZE = (10, 10) # Size of the box to exclude from the background removal
+    CLASSIC_DEFAULT_DISPLAY = False # If True, the steps of the classic method will be displayed
     
     # --- AI ---
     
     AI_MODEL_FOLDER = 'res/train_models/training_model2/'
     AI_MODEL_FILE = 'weights/best.pt'
+    AI_DEFAULT_TARGET_CLASSES_ID = [0]
+    AI_DEFAULT_TARGET_CLASSES_NAMES = ['extinguisher']
     
     # --- Reliability Scoring ---
     
@@ -89,9 +107,11 @@ class TemplateAdvancedMatcher():
     RELIABILITY_AVAILABLE_MODES = [RELIABILITY_DEPTH_MODE, RELIABILITY_BACKGROUND_MODE]
     
     # Using Depth
-    DEPTH_OUTBOX_FACTOR = 1     # Factor to multiply the box dimensions to get the dimensions of the box to get the depth values from the edges (from the center)
+    DEPTH_OUTBOX_FACTORS = (1.8, 1.4)   # Factors to multiply the pre-treatment box' dimensions to get the dimensions of the box to extract the depth values from the edges
+                                        # 1 means that the box will be of the same size as the original box
     DEPTH_DIFFERENCE_THRESHOLD = 1  # Threshold above (strictly) which the depth difference makes the pixel increase the reliability score
-    DEPTH_RELIABILITY_THRESHOLD = 0.35    # Threshold above which the object is considered valid
+    DEPTH_RELIABILITY_THRESHOLD = 0.30    # Threshold above which the object is considered valid
+    DEPTH_DISPLAY_RELIABILITY_POINTS = False # Whether the reliability points should be displayed or not while scoring each object
     
     # Using Background
     BACKGROUND_TEMPLATE_SIZE_FACTOR = 1.2 # Factor by which the template size is scaled (but does not scale the image itself) to add white pixels around
@@ -122,7 +142,7 @@ class TemplateAdvancedMatcher():
         
         self.reset()
         self.setMode(mode)
-        self.setScoringMode(reliability_mode)
+        self.setReliabilityMode(reliability_mode)
     
     
     
@@ -164,7 +184,7 @@ class TemplateAdvancedMatcher():
                 self.resetAIModeVariables()
                 self.setAIModeVariables(*args, **kwargs)
     
-    def setScoringMode(self,
+    def setReliabilityMode(self,
                        reliability_mode: int = RELIABILITY_BACKGROUND_MODE,
                        *args, **kwargs,
     ) -> None:
@@ -240,6 +260,7 @@ class TemplateAdvancedMatcher():
         self._classic_erosion_size = TemplateAdvancedMatcher.CLASSIC_DEFAULT_EROSION_SIZE
         self._classic_dilation_size = TemplateAdvancedMatcher.CLASSIC_DEFAULT_DILATION_SIZE
         self._classic_box_excluding_size = TemplateAdvancedMatcher.CLASSIC_DEFAULT_BOX_EXCLUDING_SIZE
+        self._classic_display = TemplateAdvancedMatcher.CLASSIC_DEFAULT_DISPLAY
     
     
     
@@ -251,10 +272,39 @@ class TemplateAdvancedMatcher():
                                 erosion_size: int = None,
                                 dilation_size: int = None,
                                 box_excluding_size: tuple[int] = None,
+                                classic_display: bool = None,
     ) -> None:
         """
         Sets the variables for the classic mode of the template matching.
         If a variable is not provided, the value will not change.
+        
+        Parameters
+        ----------
+        nb_attempts: int
+            The number of attempts for the classic template matching.
+            Default class value is 7.
+        nb_clusters: int
+            The number of clusters for the kmeans segmentation.
+            Default class value is 7.
+        nb_background_colors: int
+            The number of background colors to remove.
+            Default class value is 4.
+        exclude_single_pixels: bool
+            If True, the single pixels will be excluded from the background removal.
+            Default class value is True.
+        erosion_size: int
+            The size of the erosion kernel for the background removal.
+            Default class value is 3.
+        dilation_size: int
+            The size of the dilation kernel for the background removal.
+            Default class value is 3.
+        box_excluding_size: tuple[int]
+            The size of the boxes to exclude from the background removal result.
+            No box of interest of a size smaller than this value will be considered.
+            Default class value is (10, 10).
+        classic_display: bool
+            If True, the steps of the classic method will be displayed.
+            Default class value is False.
         """
         self._classic_nb_attempts = nb_attempts if nb_attempts is not None else self._classic_nb_attempts
         self._classic_nb_clusters = nb_clusters if nb_clusters is not None else self._classic_nb_clusters
@@ -263,6 +313,7 @@ class TemplateAdvancedMatcher():
         self._classic_erosion_size = erosion_size if erosion_size is not None else self._classic_erosion_size
         self._classic_dilation_size = dilation_size if dilation_size is not None else self._classic_dilation_size
         self._classic_box_excluding_size = box_excluding_size if box_excluding_size is not None else self._classic_box_excluding_size
+        self._classic_display = classic_display if classic_display is not None else self._classic_display
     
     
     
@@ -271,8 +322,8 @@ class TemplateAdvancedMatcher():
         Reset the variables for the AI mode of the template matching to use the default class ones.
         """
         self._ai_model_path = os.path.join(TemplateAdvancedMatcher.AI_MODEL_FOLDER, TemplateAdvancedMatcher.AI_MODEL_FILE)
-        self._target_classes_id = [0]
-        self._target_classes_names = ['extinguisher']
+        self._target_classes_id = TemplateAdvancedMatcher.AI_DEFAULT_TARGET_CLASSES_ID
+        self._target_classes_names = TemplateAdvancedMatcher.AI_DEFAULT_TARGET_CLASSES_NAMES
     
     
     
@@ -285,6 +336,18 @@ class TemplateAdvancedMatcher():
         """
         Sets the variables for the AI mode of the template matching.
         If a variable is not provided, the value will not change.
+        
+        Parameters
+        ----------
+        model_path: str
+            The path to the model to use for the object detection.
+            Default class value is 'res/train_models/training_model2/weights/best.pt'.
+        target_classes_id: list[int]
+            The list of target classes IDs to detect.
+            Default class value is [0].
+        target_classes_names: list[str]
+            The list of target classes names to detect.
+            Default class value is ['extinguisher'].
         """
         self._ai_model_path = model_path if model_path is not None else self._ai_model_path
         self._target_classes_id = target_classes_id if target_classes_id is not None else self._target_classes_id
@@ -296,9 +359,10 @@ class TemplateAdvancedMatcher():
         """
         Reset the variables for the depth scoring mode of the template matching to use the default class ones.
         """
-        self._depth_outbox_factor = TemplateAdvancedMatcher.DEPTH_OUTBOX_FACTOR
+        self._depth_outbox_factors = TemplateAdvancedMatcher.DEPTH_OUTBOX_FACTORS
         self._depth_difference_threshold = TemplateAdvancedMatcher.DEPTH_DIFFERENCE_THRESHOLD
         self._depth_reliability_threshold = TemplateAdvancedMatcher.DEPTH_RELIABILITY_THRESHOLD
+        self._depth_display_reliability_points = TemplateAdvancedMatcher.DEPTH_DISPLAY_RELIABILITY_POINTS
     
     
     
@@ -306,15 +370,31 @@ class TemplateAdvancedMatcher():
                                  outbox_factor: float = None,
                                  difference_threshold: float = None,
                                  reliability_threshold: float = None,
+                                 display_reliability_points: bool = None,
     ) -> None:
         """
         Sets the variables for the depth scoring mode.
         If a variable is not provided, the value will not change.
+        
+        Parameters
+        ----------
+        outbox_factor: float
+            The factor to multiply the pre-treatment box' dimensions to get the dimensions of the box to extract the depth values from the edges.
+            Default class value is (1.8, 1.4).
+        difference_threshold: float
+            The threshold above (strictly) which the depth difference makes the pixel increase the reliability score.
+            Default class value is 1.
+        reliability_threshold: float
+            The threshold above which the object is considered valid.
+            Default class value is 0.30.
+        display_reliability_points: bool
+            If True, the reliability points should be displayed while scoring each object.
+            Default class value is False.
         """
-        self._depth_outbox_factor = outbox_factor if outbox_factor is not None else self._depth_outbox_factor
+        self._depth_outbox_factors = outbox_factor if outbox_factor is not None else self._depth_outbox_factors
         self._depth_difference_threshold = difference_threshold if difference_threshold is not None else self._depth_difference_threshold
         self._depth_reliability_threshold = reliability_threshold if reliability_threshold is not None else self._depth_reliability_threshold
-    
+        self._depth_display_reliability_points = display_reliability_points if display_reliability_points is not None else self._depth_display_reliability_points
     
     def resetScoringBackgroundVariables(self) -> None:
         """
@@ -333,6 +413,18 @@ class TemplateAdvancedMatcher():
         """
         Sets the variables for the background scoring mode.
         If a variable is not provided, the value will not change.
+        
+        Parameters
+        ----------
+        template_size_factor: float
+            The factor by which the template size is scaled (but does not scale the image itself) to add white pixels around.
+            Default class value is 1.2.
+        reliability_high_threshold: float
+            The threshold above which the object is considered reliable.
+            Default class value is 0.40.
+        reliability_low_threshold: float
+            The threshold below which the object is considered unreliable.
+            Default class value is 0.30.
         """
         self._background_template_size_factor = template_size_factor if template_size_factor is not None else self._background_template_size_factor
         self._background_reliability_high_threshold = reliability_high_threshold if reliability_high_threshold is not None else self._background_reliability_high_threshold
@@ -575,18 +667,12 @@ class TemplateAdvancedMatcher():
                                                erosion_size=self._classic_erosion_size,
                                                dilation_size=self._classic_dilation_size,
                                                box_excluding_size=self._classic_box_excluding_size,
+                                               display_steps=self._classic_display,
                                                )
         relevant_boxes = []
         for contour in contours:
             x, y, w, h = cv.boundingRect(contour)
             relevant_boxes.append((x, y, w, h))
-        
-        #TODO: temporary
-        boxes_im = image.copy()
-        for box in relevant_boxes:
-            x, y, w, h = box
-            cv.rectangle(boxes_im, (x, y), (x + w, y + h), TemplateAdvancedMatcher.RECTANGLE_COLOR, TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
-        cv.imshow("Boxes", boxes_im)
         
         return relevant_boxes
 
@@ -634,7 +720,7 @@ class TemplateAdvancedMatcher():
         
         # Dividing the similarity values by the number of pixels in the template to limit big templates from being
         # penalized compared to small templates
-        similarity = matching_method(image, template) / ((tw * th)**(3/2)) #TODO: Division to be reworked?
+        similarity = matching_method(image, template) / ((tw * th)**(3/2))
         
         # #TODO: temporary test to add shape information to the similarity, but was not good, especially as it made the time computation longer
         # colors = np.array([(i, i, i) for i in [50, 150, 250]], dtype=np.uint8)
@@ -766,6 +852,7 @@ class TemplateAdvancedMatcher():
                                    image_matching_box: tuple[int],
                                    box_template_factor: float = 1.5,
                                    box_search_area_factor: float = 2,
+                                   display_steps: bool = False,
     ) -> np.ndarray:
         """
         Matches the found box from the image in the corresponding depth image.
@@ -783,12 +870,14 @@ class TemplateAdvancedMatcher():
             The factor to multiply the box dimensions to get the dimensions of the template to match. Default is 1.5.
         box_search_area_factor: float, optional
             The factor to multiply the box dimensions to get the dimensions of the search area. Default is 2.
+        display_steps: bool, optional
+            If True, the steps of the process will be displayed. Default is False.
         """
+        
         
         x, y, w, h = image_matching_box
         
-        # #* Get a larger cropped image from the depth image (30% larger than the actual match)
-        
+        #* Get a larger cropped image from the depth image (30% larger than the actual match)
         template_factor = box_template_factor
         
         # Use the entire large box which will be matched in the depth image
@@ -806,16 +895,39 @@ class TemplateAdvancedMatcher():
                                         cropping_x_template:cropping_x_template + cropping_w_template]
         
         
-        colors = np.array([(50, 50, 50), (150, 150, 150), (250, 250, 250)], dtype=np.uint8)
-        segmented_template = kmeans(corresponding_template, nClusters=3, attempts=3, colors=colors)
+        #? If better, we can use image segmentation before determining the contours
+        use_segmentation = True
+        n_clusters = 5
+        # 4 parts from the background + 1 from the extinguisher
+        # OR: 4 parts because of the 4 corners in the background + 3 because 3 distinctive parts on the extinguisher (tube, body, head)
+        n_attempts = 5
         
-        cv.imshow("Segmented template", segmented_template)
-        corresponding_template = segmented_template
+        if use_segmentation:
+            # Uses a k-means clustering to segment the image
+            # However, modify the original data so that the position of each pixel is taken into account.
+            colors = np.array([
+                (i, i, i) for i in np.linspace(0, 255, n_clusters)
+            ], dtype=np.uint8)
+            
+            initial_shape = corresponding_template.shape
+            width, height, channels = initial_shape
+            custom_data = np.zeros((width, height, channels + 2), dtype=np.float32)
+            
+            custom_data[:, :, :-2] = normalize(corresponding_template)
+            
+            # Add normalized pixel position to the data (x / width, y / height)
+            for i in range(width):
+                for j in range(height):
+                    custom_data[i, j, -2] = i / width
+                    custom_data[i, j, -1] = j / height
+            
+            segmented_image = kmeans(custom_data, nClusters=n_clusters, attempts=n_attempts, colors=colors)
+            corresponding_template = segmented_image
         
         corresponding_template_contours = cv.Canny(corresponding_template, 100, 200)
         
-        #* Get a larger cropped image from the depth image (30% larger than the actual match)
         
+        #* Get a larger cropped image from the depth image (30% larger than the actual match)
         depth_factor = box_search_area_factor
         
         # Use the outer box
@@ -824,6 +936,7 @@ class TemplateAdvancedMatcher():
         d_used_x = x
         d_used_y = y
         
+        depth_image = (normalize(depth_image.copy()) * 255).astype(np.uint8)
         
         cropping_w_depth = int(d_used_w * depth_factor)
         cropping_h_depth = int(d_used_h * depth_factor)
@@ -832,122 +945,64 @@ class TemplateAdvancedMatcher():
         cropped_depth_image = depth_image[cropping_y_depth:cropping_y_depth + cropping_h_depth,
                                                 cropping_x_depth:cropping_x_depth + cropping_w_depth]
         
-        cropped_depth_image_contours = cv.Canny(cropped_depth_image, 5, 50)
+        cropped_depth_image_contours = cv.Canny(cropped_depth_image, 60, 110)
         
         sim_depth_map = cv.matchTemplate(cropped_depth_image_contours, corresponding_template_contours, cv.TM_CCOEFF_NORMED)
         
-        # min_val, _, min_loc, _ = cv.minMaxLoc(sim_depth_map)
-        # min_x, min_y = min_loc
         _, box_max_val, _, box_max_loc = cv.minMaxLoc(sim_depth_map)
         box_match_x, box_match_y = box_max_loc
         
         large_box_x = cropping_x_depth + box_match_x
         large_box_y = cropping_y_depth + box_match_y
         
-        # Get back to the original box dimensions
         
-        # show position of original match relative to found box
+        # Get back to the original box dimensions and compute the correct box position
         found_box_x = large_box_x + (cropping_w_template - t_used_w) // 2
         found_box_y = large_box_y + (cropping_h_template - t_used_h) // 2
         
+        
+        
+        #? Visualization
+        if display_steps:
+            cv.rectangle(cropped_depth_image,
+                            (box_match_x, box_match_y),
+                            (box_match_x + cropping_w_template, box_match_y + cropping_h_template),
+                            (255, 0, 0), 2)
+            
+            cv.rectangle(depth_image,
+                            (cropping_x_depth, cropping_y_depth),
+                            (cropping_x_depth + cropping_w_depth, cropping_y_depth + cropping_h_depth),
+                            (255, 0, 0), 2)
+            cv.rectangle(depth_image,
+                            (large_box_x, large_box_y),
+                            (large_box_x + cropping_w_template, large_box_y + cropping_h_template),
+                            (200, 0, 0), 2)
+            
+            # Reset windows before displaying since the size often changes
+            try:
+                cv.destroyWindow("Image part to find in the area (template)")
+                cv.destroyWindow("Template contours")
+                cv.destroyWindow("Area in depth image to find the image part")
+                cv.destroyWindow("Area depth contours")
+            except cv.error:
+                # These windows were not opened yet
+                pass
+            
+            cv.imshow(f"Image part to find in the area (template)", corresponding_template)
+            cv.imshow(f"Template contours", corresponding_template_contours)
+            cv.imshow(f"Area in depth image to find the image part", cropped_depth_image)
+            cv.imshow(f"Area depth contours", cropped_depth_image_contours)
+        
         return found_box_x, found_box_y, t_used_w, t_used_h
-        
-
-        
-        
-        
-        # #* Now that we have rectified our large box on the depth image, let's try to match the original template on this
-        
-        # # Use the best match's box which will be matched in the reduced depth image
-        # match_factor = 1.2
-        
-        # m_used_w = final_w
-        # m_used_h = final_h
-        # m_used_x = final_x
-        # m_used_y = final_y
-        
-        # cropping_w_match = int(m_used_w * match_factor)
-        # cropping_h_match = int(m_used_h * match_factor)
-        # cropping_x_match = max(0, m_used_x - (cropping_w_match - m_used_w) // 2)
-        # cropping_y_match = max(0, m_used_y - (cropping_h_match - m_used_h) // 2)
-        # matching_template = image[cropping_y_match:cropping_y_match + cropping_h_match,
-        #                                 cropping_x_match:cropping_x_match + cropping_w_match]
-        
-        # colors = np.array([(50, 50, 50), (200, 200, 200)], dtype=np.uint8)
-        # segmented_matching_template = kmeans(matching_template, nClusters=2, attempts=3, colors=colors)
-        
-        # cv.imshow("Segmented matching template", segmented_matching_template)
-        # matching_template = segmented_matching_template
-        
-        # matching_template_contours = cv.Canny(matching_template, 100, 200)
-        
-        # resulting_cropped_depth_image = norm_depth_image[large_box_y:large_box_y + cropping_h_template,
-        #                                                     large_box_x:large_box_x + cropping_w_template]
-        
-        # resulting_cropped_depth_image_contours = cv.Canny(resulting_cropped_depth_image, 50, 100)
-        
-        
-        # sim_advanced_depth_map = cv.matchTemplate(resulting_cropped_depth_image_contours, matching_template_contours, cv.TM_CCOEFF_NORMED)
-        
-        
-        # _, match_max_val, _, match_max_loc = cv.minMaxLoc(sim_advanced_depth_map)
-        # match_x, match_y = match_max_loc
-        
-        #* Rectangles
-        
-        
-        # cv.rectangle(cropped_depth_image,
-        #                 (box_match_x, box_match_y),
-        #                 (box_match_x + cropping_w_template, box_match_y + cropping_h_template),
-        #                 (255, 0, 0), 2)
-        
-        
-        # cv.rectangle(norm_depth_image,
-        #                 (cropping_x_depth, cropping_y_depth),
-        #                 (cropping_x_depth + cropping_w_depth, cropping_y_depth + cropping_h_depth),
-        #                 (255, 0, 0), 2)
-        # cv.rectangle(norm_depth_image,
-        #                 (large_box_x, large_box_y),
-        #                 (large_box_x + cropping_w_template, large_box_y + cropping_h_template),
-        #                 (200, 0, 0), 2)
-
-        
-        
-        # cv.rectangle(resulting_cropped_depth_image,
-        #                 (match_x, match_y),
-        #                 (match_x + cropping_w_match, match_y + cropping_h_match),
-        #                 (255, 0, 0), 2)
-        
-        # cv.rectangle(norm_depth_image,
-        #             (large_box_x + match_x, large_box_y + match_y),
-        #             (large_box_x + match_x + cropping_w_match, large_box_y + match_y + cropping_h_match),
-        #             (150, 0, 0), 2)
-        
-        
-        # # show position of original match relative to found box
-        # found_box_x = large_box_x + (cropping_w_template - t_used_w) // 2
-        # found_box_y = large_box_y + (cropping_h_template - t_used_h) // 2
-        # cv.rectangle(norm_depth_image,
-        #                 (found_box_x + x_best, found_box_y + y_best),
-        #                 (found_box_x + x_best + w_best, found_box_y + y_best + h_best),
-        #                 (0, 0, 0), 2)
-        
-        
-        
-        # cv.imshow(f"Corresponding template", corresponding_template)
-        # cv.imshow(f"Corresponding template contours", corresponding_template_contours)
-        # cv.imshow(f"Cropped depth image", cropped_depth_image)
-        # cv.imshow(f"Depth contours", cropped_depth_image_contours)
-        # cv.imshow(f"Matching template", matching_template)
-        # cv.imshow(f"Matching template contours", matching_template_contours)
-        # cv.imshow(f"Resulting cropped depth image", resulting_cropped_depth_image)
-        # cv.imshow(f"Resulting cropped depth image contours", resulting_cropped_depth_image_contours)
     
     def _get_reliability_score_on_depth(self,
                                         depth_image: np.ndarray,
                                         depth_value: float,
                                         box_center_position: tuple[int],
                                         box_size: tuple[int],
+                                        size_factors: tuple[float] = None,
+                                        threshold: float = None,
+                                        display_points: bool = False,
     ) -> float:
         """
         Computes the reliability score of the object detected in the given box, based on the depth image.
@@ -961,8 +1016,16 @@ class TemplateAdvancedMatcher():
             The depth value of the center of the box.
         box_center_position: tuple[int]
             The center position of the box in the format (x, y).
-        box_size: tuple[int]
+        box_size: tuple[int], optional
             The size of the box in the format (w, h).
+        size_factors: tuple[float]
+            The factors to multiply the box dimensions to get the dimensions of the box to extract the depth values from the edges.
+            If not provided, the class variable will be used.
+        threshold: float
+            The threshold above (strictly) which the depth difference makes the pixel increase the reliability score.
+            If not provided, the class variable will be used.
+        display_points: bool, optional
+            If True, the points used to compute the reliability score will be displayed. Default is False.
         
         Returns
         -------
@@ -970,30 +1033,22 @@ class TemplateAdvancedMatcher():
             The reliability score of the object detected in the given box.
         """
         
+        if size_factors is None:
+            size_factors = TemplateAdvancedMatcher.DEPTH_OUTBOX_FACTORS
+        
+        if threshold is None:
+            threshold = TemplateAdvancedMatcher.DEPTH_DIFFERENCE_THRESHOLD
+        
         cbw, cbh = box_center_position
         w, h = box_size
         
-        out_coeff = self._depth_outbox_factor
-        top_edge = cbh - int(h * out_coeff)
-        bottom_edge = cbh + int(h * out_coeff)
-        left_edge = cbw - int(w * out_coeff)
-        right_edge = cbw + int(w * out_coeff)
+        out_coeffs = np.array(size_factors) / 2  # Divide by 2 to get the coefficient for each side
         
-        #? Visualization
-        # cv.circle(depth_image, (cbw + int(w * out_coeff), cbh), 1, (100, 0, 0), -1)
-        # cv.circle(depth_image, (cbw, cbh - int(h * out_coeff)), 1, (100, 0, 0), -1)
-        
-        # print("Depth values in the order right, left, top, bottom: ")
-        # print(depth_value_right, depth_value_left, depth_value_top, depth_value_bottom)
-        # print("Depth values out of the box in the order right, left, top, bottom: ")
-        # print(depth_value_out_right, depth_value_out_left, depth_value_out_top, depth_value_out_bottom)
-        # print("Depth values differences with the center (same order):")
-        # print(depth_value_right - depth_value, depth_value_left - depth_value, depth_value_top - depth_value, depth_value_bottom - depth_value)
-        # print("Depth values differences with the center (out of the box) (same order):")
-        # print(depth_value_out_right - depth_value, depth_value_out_left - depth_value, depth_value_out_top - depth_value, depth_value_out_bottom - depth_value)
-        
-        
-        threshold = self._depth_difference_threshold
+        # Avoid getting out of the image
+        top_edge = max(0, cbh - int(h * out_coeffs[1]))
+        bottom_edge = min(depth_image.shape[0] - 1, cbh + int(h * out_coeffs[1]))
+        left_edge = max(0, cbw - int(w * out_coeffs[0]))
+        right_edge = min(depth_image.shape[1] - 1, cbw + int(w * out_coeffs[0]))
         
         pixels_to_check_width = np.array([
             [(i, top_edge) for i in range(left_edge, right_edge + 1)],
@@ -1009,14 +1064,15 @@ class TemplateAdvancedMatcher():
         diff_array_height = np.abs(depth_image[pixels_to_check_height[:, :, 1], pixels_to_check_height[:, :, 0]].astype(np.int16) - depth_value)
         
         #? Visualization
-        # color_depth_im = cv.cvtColor(depth_image.copy(), cv.COLOR_GRAY2BGR)
-        # for i in range(2):
-        #     for j in range(len(pixels_to_check_width[i])):
-        #         cv.circle(color_depth_im, pixels_to_check_width[i, j], 1, (255, 0, 0), -1)
-        #     for j in range(len(pixels_to_check_height[i])):
-        #         cv.circle(color_depth_im, pixels_to_check_height[i, j], 1, (0, 0, 255), -1)
-        # cv.imshow("Color depth image", color_depth_im)
-        # waitNextKey(0)
+        if display_points:
+            color_depth_im = normalize(cv.cvtColor(depth_image.copy(), cv.COLOR_GRAY2BGR))
+            for i in range(2):
+                for j in range(len(pixels_to_check_width[i])):
+                    cv.circle(color_depth_im, pixels_to_check_width[i, j], 1, (1., 0, 0), -1)
+                for j in range(len(pixels_to_check_height[i])):
+                    cv.circle(color_depth_im, pixels_to_check_height[i, j], 1, (0, 0, 1.), -1)
+            cv.imshow("Color depth image", color_depth_im)
+            # waitNextKey(0)
         
         reliable_pixels_width = (diff_array_width > threshold)
         reliable_pixels_height = (diff_array_height > threshold)
@@ -1025,16 +1081,6 @@ class TemplateAdvancedMatcher():
         reliability_score = (np.sum(reliable_pixels_width) + np.sum(reliable_pixels_height)) / (reliable_pixels_width.size + reliable_pixels_height.size)
         
         return reliability_score
-    
-        #? This worked fine. Better?
-        # count = sum(
-        #     [
-        #         abs(depth_value_out_right - depth_value) > threshold,
-        #         abs(depth_value_out_left - depth_value) > threshold,
-        #         abs(depth_value_out_top - depth_value) > threshold,
-        #         abs(depth_value_out_bottom - depth_value) > threshold,
-        #     ]
-        # )
     
     @staticmethod
     def _get_reliability_score_on_background(image: np.ndarray,
@@ -1128,8 +1174,6 @@ class TemplateAdvancedMatcher():
         ranges_values: tuple[np.ndarray]
             tuple containing the ranges of the scaling factors and thetas corresponding to the best match.
         """
-        print("similary case : ", similarity_case)
-        print(similarity_stats)
         min_max_value = similarity_stats[similarity_case[0]]
         min_max_index = similarity_stats[similarity_case[1]] # (fx_i, fy_j, theta_k, height, width)
         
@@ -1203,7 +1247,6 @@ class TemplateAdvancedMatcher():
         If there are not any similarity that can be computed because of non-valid sizes, the returned similarity map and stats will be filled with NaN values.
         """
         
-        #TODO: verif on sizes, shapes, etc...
         matching_method = None
         
         if custom_matching_method is None:
@@ -1286,6 +1329,7 @@ class TemplateAdvancedMatcher():
                   custom_matching_method: Callable = None,
                   custom_case: Case = None,
                   show_progress: bool = False,
+                  display_depth_matching: bool = False,
     ):
         """"
         Match the base template on the image using pre-treatment to reduce the range of the search.
@@ -1313,6 +1357,8 @@ class TemplateAdvancedMatcher():
         projection_matrix: np.ndarray, optional
             The projection matrix to compute the position of each match in the 3D space. Default is None.
             Will be ignored if no depth image is provided.
+        display_depth_matching: bool, optional
+            If True, the depth matching will be displayed. Default is False.
         custom_matching_method: Callable, optional
             A custom method to compute the similarity map. If not None, the openCV method will not be used.
             This method should be of the form: custom_matching_method(image: np.ndarray, template: np.ndarray) -> np.ndarray
@@ -1473,17 +1519,41 @@ class TemplateAdvancedMatcher():
             best_fy = new_range_fy[best_match_factors_indexes[1]]
             best_theta = new_range_theta[best_match_factors_indexes[2]]
             
-            best_matches.append((best_match[0], best_match[1], (best_fx, best_fy, best_theta)))
+            best_matches.append((best_match[0], best_match[1], (best_fx, best_fy, best_theta))) # (box_properties, value, factors)
         
        
         #* Score the best matches and get the final image
-        #TODO: temp
-        print("Matches found on ", len(best_matches), " images.")
         
         # Sorting the best matches by their score
         new_indexes = np.argsort([match[1] for match in best_matches])
         best_matches = [best_matches[i] for i in new_indexes]
         matching_crop_indexes = [matching_crop_indexes[i] for i in new_indexes]
+        
+        
+        
+        #? We should get rid of the boxes where the score is too far from the best score in order to try do keep only
+        #? the boxes where there is actually an extinguisher.
+        #! However, this does not work properly and we did not find a correct threshold or way to do it.
+        #! The score for small black objects are always better than the one of the extinguisher.
+        # if self.mode == TemplateAdvancedMatcher.CLASSIC_MODE:
+        #     # Try to eliminate boxes where there are no real match
+            
+        #     best_score_index = 0 if similarity_case == Case.MIN else -1
+        #     best_score = best_matches[best_score_index][1]
+            
+        #     indexes_to_keep = []
+        #     if similarity_case == Case.MIN:
+        #         for i in range(len(best_matches)):
+        #             if best_matches[i][1] < 1.2 * best_score:
+        #                 indexes_to_keep.append(i)
+        #     else:
+        #         for i in range(len(best_matches)):
+        #             if best_matches[i][1] > 0.8 * best_score:
+        #                 indexes_to_keep.append(i)
+            
+        #     best_matches = [best_matches[i] for i in indexes_to_keep]
+        #     matching_crop_indexes = [matching_crop_indexes[i] for i in indexes_to_keep]
+        
         
         # list of valid matches, where a valid match is (match_box, score) in the image coordinates
         valid_matches = []
@@ -1559,26 +1629,27 @@ class TemplateAdvancedMatcher():
             if depth_image is not None:
                 
                 #* Get the adapted matching box from the depth image
-                depth_box = TemplateAdvancedMatcher._get_depth_image_match_box(norm_depth_image,
+                depth_box = TemplateAdvancedMatcher._get_depth_image_match_box(image,
                                                                                depth_image,
                                                                                box,
                                                                                box_template_factor=1.5,
-                                                                               box_search_area_factor=2)
+                                                                               box_search_area_factor=2,
+                                                                               display_steps=TemplateAdvancedMatcher.DISPLAY_DEPTH_MATCHING_STEPS,)
                 
                 depth_box_x, depth_box_y, depth_box_w, depth_box_h = depth_box
                 
-                cv.rectangle(norm_depth_image,
-                                (depth_box_x, depth_box_y),
-                                (depth_box_x + depth_box_w, depth_box_y + depth_box_h),
-                                (250, 250, 250), 2)
+                if display_depth_matching:
+                    cv.rectangle(norm_depth_image,
+                                    (depth_box_x, depth_box_y),
+                                    (depth_box_x + depth_box_w, depth_box_y + depth_box_h),
+                                    (250, 250, 250), 2)
+                    
+                    cv.rectangle(norm_depth_image,
+                                    (depth_box_x + x_best, depth_box_y + y_best),
+                                    (depth_box_x + x_best + w_best, depth_box_y + y_best + h_best),
+                                    (0, 0, 0), 2)
                 
-                cv.rectangle(norm_depth_image,
-                                (depth_box_x + x_best, depth_box_y + y_best),
-                                (depth_box_x + x_best + w_best, depth_box_y + y_best + h_best),
-                                (0, 0, 0), 2)
                 
-                
-                #TODO: Set in a method get_match_reliability_score() or something
                 bx = depth_box_x + x_best
                 by = depth_box_y + y_best
                 bw = w_best
@@ -1587,16 +1658,26 @@ class TemplateAdvancedMatcher():
                 cbw = bx + bw // 2 # center of this box (width)
                 cbh = by + bh // 2 # center of this box (height)
                 
-                depth_value = depth_image[cbh, cbw]
-                # Draw a marker on the right spot
-                cv.circle(norm_depth_image, (cbw, cbh), 3, (255, 0, 0), -1)
+                position2D = (cbw, cbh)
                 
-                print("Depth value: ", depth_value)
+                depth_value = depth_image[cbh, cbw]
+                if display_depth_matching:
+                    # Draw a marker on the right spot
+                    cv.circle(norm_depth_image, (cbw, cbh), 3, (255, 0, 0), -1)
+                
                 if depth_value == 0:
-                    depth_value = None
-                else:
+                    # look pixels in 5x5 area around the center of the box and get the minimum non zero value
+                    depth_area = depth_image[max(0, cbh - 2):min(depth_image.shape[0], cbh + 3),
+                                             max(0, cbw - 2):min(depth_image.shape[1], cbw + 3)]
+                    non_zero_values = depth_area[depth_area != 0]
+                    if non_zero_values.size > 0:
+                        depth_value = np.min(depth_area[depth_area != 0])
+                    else:
+                        depth_value = None
+                
+                if depth_value is not None:
                     if projection_matrix is not None:
-                        homogenous_position_2D = np.array([position2D[0], position2D[1], 1]) * depth_value
+                        homogenous_position_2D = np.array([cbw, cbh, 1]) * depth_value
                         # extract relevant matrix 3x3 from the projection matrix
                         projection_matrix = projection_matrix[:3, :3]
                         homogeneous_position_3D = np.linalg.solve(projection_matrix, homogenous_position_2D)
@@ -1605,6 +1686,13 @@ class TemplateAdvancedMatcher():
                         # |
                         # V
                         # y
+                        #* This is the same as this:
+                        # K0 = projection_matrix
+                        # f = K0[0, 0] # This is f/rho_w
+                        # Z = depth_value
+                        # X = (cbw - K0[0, 2]) * Z / f
+                        # Y = (cbh - K0[1, 2]) * Z / f
+                        
                     
                     
                     #? Checking reliability on depth
@@ -1612,27 +1700,23 @@ class TemplateAdvancedMatcher():
                         reliability_score = self._get_reliability_score_on_depth(depth_image,
                                                                                 depth_value,
                                                                                 (cbw, cbh),
-                                                                                (w_best, h_best))
-                        # TODO: temporary, and to be removed
-                        DEPTH_TESTING_LIST.append(reliability_score)
-                        print("DEPTH TESTING LIST: ", DEPTH_TESTING_LIST)
-                        test_list = np.array(DEPTH_TESTING_LIST)
-                        print("Stats in the order: min, max, mean, std")
-                        print(np.min(test_list), np.max(test_list), np.mean(test_list), np.std(test_list))
+                                                                                (w_best, h_best),
+                                                                                size_factors=self._depth_outbox_factors,
+                                                                                threshold=self._depth_difference_threshold,
+                                                                                display_points=self._depth_display_reliability_points,)
+                        
+                        # #? Used to tune thresholds
+                        # DEPTH_TESTING_LIST.append(reliability_score)
+                        # print("DEPTH TESTING LIST: ", DEPTH_TESTING_LIST)
+                        # test_list = np.array(DEPTH_TESTING_LIST)
+                        # print("Stats in the order: min, max, mean, std")
+                        # print(np.min(test_list), np.max(test_list), np.mean(test_list), np.std(test_list))
                         
                         valid_object = (reliability_score >= self._depth_reliability_threshold)
                         print("Valid extinguisher: ", valid_object, " (reliability score = ", reliability_score, ")")
                         
                         #? Works quite fine, but is still not perfect due to the fact that depth maps are not aligned,
                         #? and since during the time we are behind the extinguisher, the match is not really good.
-                    
-                    
-                    # #TODO: temporary
-                    # # Visualize
-                    # temp_im = normalize(depth_image.copy()).astype(np.float32)
-                    # temp_im = cv.cvtColor(temp_im, cv.COLOR_GRAY2BGR)
-                    # cv.circle(temp_im, (center_box_width, center_box_height), 3, (255, 0, 0), -1)
-                    # cv.imshow(f"Depth + {i}", temp_im)
             
             
             final_point_1 = (final_x, final_y)
@@ -1653,6 +1737,13 @@ class TemplateAdvancedMatcher():
                 box_height = int(final_h * self._background_template_size_factor)
                 box_x = final_x - (box_width - final_w) // 2
                 box_y = final_y - (box_height - final_h) // 2
+                
+                # Avoid box from going out of the image
+                box_x = max(0, box_x)
+                box_y = max(0, box_y)
+                box_width = min(image.shape[1] - box_x, box_width)
+                box_height = min(image.shape[0] - box_y, box_height)
+                
                 background_reliability_score = TemplateAdvancedMatcher._get_reliability_score_on_background(image,
                                                                                                             corresponding_template,
                                                                                                             (box_x, box_y, box_width, box_height))
@@ -1665,58 +1756,87 @@ class TemplateAdvancedMatcher():
                     # Undetermined
                     valid_object = None
                 
-                BACKGROUND_TESTING_LIST.append(background_reliability_score)
-                print("BACKGROUND TESTING LIST: ", BACKGROUND_TESTING_LIST)
-                back_test_list = np.array(BACKGROUND_TESTING_LIST)
-                print("Stats in the order: min, max, mean, std")
-                print(np.min(back_test_list), np.max(back_test_list), np.mean(back_test_list), np.std(back_test_list))
-           
-           
-            #TODO: Temporary(?)
+                # #? Used to tune thresholds
+                # BACKGROUND_TESTING_LIST.append(background_reliability_score)
+                # print("BACKGROUND TESTING LIST: ", BACKGROUND_TESTING_LIST)
+                # back_test_list = np.array(BACKGROUND_TESTING_LIST)
+                # print("Stats in the order: min, max, mean, std")
+                # print(np.min(back_test_list), np.max(back_test_list), np.mean(back_test_list), np.std(back_test_list))
+            
+            
             
             label = "Object"
-            class_color = (255, 0, 0)
+            position_label = ""
+            class_color = (150, 0, 0)
             if valid_object is not None:
                 valid_str = "Valid" if valid_object else "Invalid"
                 label += f" ({valid_str})"
-                class_color = (0, 255, 0) if valid_object else (0, 0, 255)
+                class_color = (0, 150, 0) if valid_object else (0, 0, 150)
             if homogeneous_position_3D is not None:
                 hx, hy, hz = homogeneous_position_3D
-                label += " pos: ({:.1f}, {:.1f}, {:.1f})".format(hx, hy, hz)
+                position_label += "position: ({:.1f}, {:.1f}, {:.1f})".format(hx, hy, hz)
             
             
             cv.rectangle(final_image, (x, y), (x + w, y + h), class_color, TemplateAdvancedMatcher.RECTANGLE_THICKNESS)
             
-            # Add text
-            (text_width, text_height), baseline = cv.getTextSize(label,
+            #* Add text on matching boxes
+            (label_width, label_height), label_baseline = cv.getTextSize(label,
                                                                  TemplateAdvancedMatcher.FONT,
                                                                  TemplateAdvancedMatcher.TEXT_SCALE,
                                                                  TemplateAdvancedMatcher.TEXT_THICKNESS)
+            
+            (pos_label_width, pos_label_height), pos_label_baseline = cv.getTextSize(position_label,
+                                                                    TemplateAdvancedMatcher.FONT,
+                                                                    TemplateAdvancedMatcher.TEXT_SCALE,
+                                                                    TemplateAdvancedMatcher.TEXT_THICKNESS)
+            
+            final_label_width = max(label_width, pos_label_width)
+            final_label_height = label_height + pos_label_height
+            final_label_baseline = label_baseline + pos_label_baseline
+            
+            # Get the best position to put the text
+            box_top_diff = y - final_label_height
+            box_bottom_diff = image.shape[0] - (y + h)
+            
+            
+            l_rect_x = x
+            l_rect_w = final_label_width
+            l_rect_y = None
+            l_rect_h = final_label_height
+            if box_bottom_diff > 0 and box_bottom_diff <= box_top_diff:
+                # Display the text at the bottom of the box
+                l_rect_y = y + h
+            else:
+                # Display the text at the top of the box
+                l_rect_y = y - final_label_height
+            
+            
             cv.rectangle(final_image,
-                         (x, y - text_height),
-                         (x + text_width, y + baseline),
+                         (l_rect_x, l_rect_y),
+                         (l_rect_x + l_rect_w, l_rect_y + l_rect_h + final_label_baseline),
                          class_color,
                          cv.FILLED)
+            # Display base label
             cv.putText(final_image, label,
-                       (x, y),
+                       (l_rect_x, l_rect_y + label_height),
                        TemplateAdvancedMatcher.FONT,
                        TemplateAdvancedMatcher.TEXT_SCALE,
                        TemplateAdvancedMatcher.TEXT_COLOR,
                        TemplateAdvancedMatcher.TEXT_THICKNESS)
+            # Display position label
+            cv.putText(final_image, position_label,
+                       (l_rect_x, l_rect_y + final_label_height + label_baseline),
+                       TemplateAdvancedMatcher.FONT,
+                       TemplateAdvancedMatcher.TEXT_SCALE,
+                       TemplateAdvancedMatcher.TEXT_COLOR,
+                       TemplateAdvancedMatcher.TEXT_THICKNESS)
+
             # waitNextKey(0)
         
         
-        if depth_image is not None:
-            #TODO: Temporary(?)
+        if depth_image is not None and display_depth_matching:
             cv.imshow(f"Normalized Depth image", norm_depth_image)
         
         self.final_image = final_image
         
         return final_image, valid_matches, self._similarity_stats, self._similarity_maps
-
-
-
-#TODO:
-# - Most importantly, optimize the matching inside a reduced box.
-# - Optional: optimize classical box detection
-

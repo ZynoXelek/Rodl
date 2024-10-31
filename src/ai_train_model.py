@@ -25,7 +25,7 @@ def train():
     t1 = t.time()
 
     # Train the model on the dataset
-    model.train(data = yaml_path, epochs = 1, imgsz = 10, project = train_models_folder, name = new_model_name)
+    model.train(data = yaml_path, epochs = 5, imgsz = 640, project = train_models_folder, name = new_model_name)
     
     delta_t = t.time() - t1
     hour, min, sec = convert_seconds(int(delta_t))
