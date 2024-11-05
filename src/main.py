@@ -66,9 +66,10 @@ def main():
     cv.imshow("Base template", base_template)
     waitNextKey(0)
     
+    #? Matcher modes (can be modified) --------------------------------------
     
     # Create advance matcher
-    matcher_mode = TemplateAdvancedMatcher.CLASSIC_MODE  # TemplateAdvancedMatcher.AI_MODE or TemplateAdvancedMatcher.CLASSIC_MODE
+    matcher_mode = TemplateAdvancedMatcher.AI_MODE  # TemplateAdvancedMatcher.AI_MODE or TemplateAdvancedMatcher.CLASSIC_MODE
     reliability_mode = TemplateAdvancedMatcher.RELIABILITY_BACKGROUND_MODE # TemplateAdvancedMatcher.RELIABILITY_BACKGROUND_MODE or TemplateAdvancedMatcher.RELIABILITY_DEPTH_MODE
     matcher = TemplateAdvancedMatcher(matcher_mode, reliability_mode)
     
@@ -103,8 +104,9 @@ def main():
                                         dilation_size=None,
                                         box_excluding_size=None,
                                         classic_display=False,)
-    #? ----------------------------------------------------------------------
+    #? Global parameters (can be modified) ---------------------------------
     
+    TemplateAdvancedMatcher.DISPLAY_DEPTH_MATCHING_STEPS = False #True
     
     #? Scoring parameters (can be modified) --------------------------------
     
