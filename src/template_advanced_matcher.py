@@ -1623,6 +1623,7 @@ class TemplateAdvancedMatcher():
             
             depth_value = None
             valid_object = None # Undefined by default
+            reliability_score = None
             position2D = (center_box_width, center_box_height)
             homogeneous_position_3D = None
             
@@ -1744,20 +1745,20 @@ class TemplateAdvancedMatcher():
                 box_width = min(image.shape[1] - box_x, box_width)
                 box_height = min(image.shape[0] - box_y, box_height)
                 
-                background_reliability_score = TemplateAdvancedMatcher._get_reliability_score_on_background(image,
+                reliability_score = TemplateAdvancedMatcher._get_reliability_score_on_background(image,
                                                                                                             corresponding_template,
                                                                                                             (box_x, box_y, box_width, box_height))
 
-                if background_reliability_score >= self._background_reliability_high_threshold:
+                if reliability_score >= self._background_reliability_high_threshold:
                     valid_object = True
-                elif background_reliability_score <= self._background_reliability_low_threshold:
+                elif reliability_score <= self._background_reliability_low_threshold:
                     valid_object = False
                 else:
                     # Undetermined
                     valid_object = None
                 
                 # #? Used to tune thresholds
-                # BACKGROUND_TESTING_LIST.append(background_reliability_score)
+                # BACKGROUND_TESTING_LIST.append(reliability_score)
                 # print("BACKGROUND TESTING LIST: ", BACKGROUND_TESTING_LIST)
                 # back_test_list = np.array(BACKGROUND_TESTING_LIST)
                 # print("Stats in the order: min, max, mean, std")
@@ -1772,6 +1773,8 @@ class TemplateAdvancedMatcher():
                 valid_str = "Valid" if valid_object else "Invalid"
                 label += f" ({valid_str})"
                 class_color = (0, 150, 0) if valid_object else (0, 0, 150)
+            if reliability_score is not None:
+                label += " - Score: {:.2f}".format(reliability_score)
             if homogeneous_position_3D is not None:
                 hx, hy, hz = homogeneous_position_3D
                 position_label += "position: ({:.1f}, {:.1f}, {:.1f})".format(hx, hy, hz)
