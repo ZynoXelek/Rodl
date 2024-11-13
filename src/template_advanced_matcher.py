@@ -63,7 +63,7 @@ class TemplateAdvancedMatcher():
     #* Constants
     
     RECTANGLE_COLOR = (150, 255, 150)
-    RECTANGLE_THICKNESS = 1
+    RECTANGLE_THICKNESS = 2
     
     BOX_LIMIT_RATIO = 0.5
     
@@ -1624,7 +1624,6 @@ class TemplateAdvancedMatcher():
             depth_value = None
             valid_object = None # Undefined by default
             reliability_score = None
-            position2D = (center_box_width, center_box_height)
             homogeneous_position_3D = None
             
             if depth_image is not None:
@@ -1658,8 +1657,6 @@ class TemplateAdvancedMatcher():
                 
                 cbw = bx + bw // 2 # center of this box (width)
                 cbh = by + bh // 2 # center of this box (height)
-                
-                position2D = (cbw, cbh)
                 
                 depth_value = depth_image[cbh, cbw]
                 if display_depth_matching:

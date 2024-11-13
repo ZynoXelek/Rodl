@@ -33,3 +33,13 @@ During the processing, press `[Space]` to switch from the image per image mode t
 - During the image per image mode, press any key to go to the next image.
 - During the continuous mode, the processing keeps going as long as it can
 During any of these mods, press `[Escape]` to stop the program early and quit.
+
+## Example
+
+Here is an example of the result of running the program with the default processing modes.
+They are the AI mode for the pre-processing step and the Background scoring method to detect fake and true extinguishers.
+![](result_example.png)
+
+The outer boxes show where extinguishers have been detected at the end of the pre-processing step.
+The inner boxes show where the main body of each of them has been detected (used to decide which depth value to use to locate it).
+The boxes' color show whether they are considered fake or not.
